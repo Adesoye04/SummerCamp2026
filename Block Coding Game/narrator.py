@@ -1,116 +1,135 @@
 """
-narrator.py — Ollama-powered natural language for game checkpoints.
-Call pre_generate() once at startup; all messages are ready before the game begins.
+narrator.py — Narration for game checkpoints.
+
+Loads pre-generated narration from narration_cache.json (created by
+generate_narration.py).  Falls back to hardcoded defaults if the cache
+is missing or incomplete.
 """
 
-import requests
+import json
+import os
 
-OLLAMA_URL   = "http://localhost:11434/api/chat"
-OLLAMA_MODEL = "qwen2.5:1.5b"
+# ── Cache file path ──────────────────────────────────────────────────────────
 
-SYSTEM_PROMPT = (
-    "You are Misty, a small friendly robot talking to a child playing a navigation game. "
-    "You speak in short, warm, enthusiastic sentences — 1 to 2 sentences maximum. "
-    "You are speaking out loud so keep it simple and fun."
-)
+CACHE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "narration_cache.json")
 
 
-def _ask(prompt: str) -> str:
-    try:
-        r = requests.post(OLLAMA_URL, json={
-            "model":   OLLAMA_MODEL,
-            "messages": [
-                {"role": "system",  "content": SYSTEM_PROMPT},
-                {"role": "user",    "content": prompt},
-            ],
-            "stream": False,
-        }, timeout=30)
-        r.raise_for_status()
-        return r.json()["message"]["content"].strip()
-    except Exception as e:
-        return None   # caller falls back to static hint
+# ── Hardcoded fallback narration ─────────────────────────────────────────────
+# Used when the cache doesn't exist or is missing entries.
+
+HARDCODED_NARRATION = [
+    # Phase 1 — destination (forward, forward)
+    {
+        "hint":        "Alright, here we go! Place two cards to send me straight ahead!",
+        "success":     "Woohoo, you got it! Off I go, zooming forward!",
+        "wrong_order": "Hmm, you have the right cards but they're a little mixed up. Try swapping them around!",
+        "wrong_ids":   "Oops, those aren't quite the right cards. Let's pick different ones!",
+        "returning":   "That was fun! Heading back home now!",
+    },
+    # Phase 2 — supermarket
+    {
+        "hint":        "Time for leg two! I need to get to the supermarket. Five cards this time — watch out for the left turns!",
+        "success":     "Yes! Nailed it! I'm on my way to the supermarket!",
+        "wrong_order": "So close! You picked the right cards, but the order is a little off. Give it another try!",
+        "wrong_ids":   "Hmm, those cards won't get me to the supermarket. Try a different combination!",
+        "returning":   "Got my groceries! Heading back home from the supermarket!",
+    },
+    # Phase 3 — destination (left then right)
+    {
+        "hint":        "Leg three! Five cards again — this time there's a left turn AND a right turn. You can do it!",
+        "success":     "Amazing! That was a tricky one and you crushed it! Let's roll!",
+        "wrong_order": "Right cards, wrong order! Think about which turn comes first and try again!",
+        "wrong_ids":   "Those aren't the right cards for this path. Try picking some different ones!",
+        "returning":   "What an adventure! Zooming back home now!",
+    },
+    # Phase 4 — school
+    {
+        "hint":        "Leg four — heading to school! Six cards this time. Watch for the double forward in the middle!",
+        "success":     "Wooo, perfect! Off to school we go!",
+        "wrong_order": "Almost! The cards are right but the sequence is jumbled. Rearrange and try again!",
+        "wrong_ids":   "Oops, wrong cards! Think about the path to school and try different ones!",
+        "returning":   "School visit done! Racing back home!",
+    },
+    # Phase 5 — destination (final leg)
+    {
+        "hint":        "Last leg! Six cards — double forward then a right turn. You've got this!",
+        "success":     "You did it! Final stretch, here I come!",
+        "wrong_order": "So close to the finish! Right cards, wrong order. One more try!",
+        "wrong_ids":   "Not quite the right cards for the final leg. Pick some different ones!",
+        "returning":   "We made it! Heading home one last time — what a journey!",
+    },
+]
 
 
-def _generate_for(phase: int, total: int, location: str) -> dict:
-    loc = location.lower()
-    return {
-        "hint": _ask(
-            f"It's leg {phase} of {total}. Tell the child you need their help navigating to the {loc}. "
-            f"Mention they need to arrange cards in the right order."
-        ),
-        "success": _ask(
-            f"The child got the card sequence right! You're now heading to the {loc}. "
-            f"Say something excited and encouraging."
-        ),
-        "wrong_order": _ask(
-            f"The child placed the right cards but in the wrong order to get to the {loc}. "
-            f"Gently tell them to rearrange and try again."
-        ),
-        "wrong_ids": _ask(
-            f"The child used the wrong cards entirely for navigating to the {loc}. "
-            f"Encourage them to try different cards."
-        ),
-        "returning": _ask(
-            f"You successfully visited the {loc} and now you're heading back home. "
-            f"Say something brief and happy about the trip."
-        ),
-    }
+# ── Public API ───────────────────────────────────────────────────────────────
 
-
-def _ollama_reachable() -> bool:
-    """Return True if the Ollama server responds."""
-    try:
-        r = requests.get(OLLAMA_URL.replace("/api/chat", "/api/tags"), timeout=3)
-        return r.status_code == 200
-    except Exception:
-        return False
-
-
-def pre_generate(checkpoints: list) -> list[dict]:
+def pre_generate(checkpoints: list, map_id: int = 1) -> list[dict]:
     """
-    Generate narration for every checkpoint before the game starts.
-    Returns a list of dicts indexed the same as checkpoints.
-    Falls back to static messages if Ollama is unavailable.
+    Return narration for every checkpoint.
+
+    Priority:
+      1. narration_cache.json  (AI-generated, pre-cached)
+      2. HARDCODED_NARRATION   (static fallback)
+      3. _default()            (generic fallback for extra phases)
     """
     total   = len(checkpoints)
     results = []
 
-    # ── Connectivity check ────────────────────────────────────────────────────
-    if not _ollama_reachable():
-        print()
-        print("  ⚠  WARNING: Ollama is not running (localhost:11434 unreachable).")
-        print("  ⚠  Narration will use static fallback lines for all phases.")
-        print("  ⚠  To enable AI narration: run  ollama serve  in another terminal.")
-        print()
-        # Build results immediately from static fallbacks
-        for i, cp in enumerate(checkpoints, 1):
-            location = getattr(cp, "location", "destination")
-            results.append({
-                "hint":        cp.hint,
-                "success":     _default("success",     location),
-                "wrong_order": _default("wrong_order", location),
-                "wrong_ids":   _default("wrong_ids",   location),
-                "returning":   _default("returning",   location),
-            })
-        return results
+    # ── Try to load the cache ────────────────────────────────────────────
+    cached_phases = _load_cache(map_id)
 
-    print(f"  ✓  Ollama reachable — generating narration with {OLLAMA_MODEL}...")
-    for i, cp in enumerate(checkpoints, 1):
+    if cached_phases:
+        print(f"  ✓  Loaded AI narration from cache ({len(cached_phases)} phases).")
+    else:
+        print("  ℹ  No narration cache found — using hardcoded fallbacks.")
+        print(f"     Run 'python3 generate_narration.py' to generate AI narration.")
+
+    # ── Build narration list ─────────────────────────────────────────────
+    for i, cp in enumerate(checkpoints):
         location = getattr(cp, "location", "destination")
-        print(f"  Generating narration for leg {i} ({location})...", end=" ", flush=True)
-        msgs = _generate_for(i, total, location)
+        msgs     = {}
 
-        # Fall back to static lines for any individual message that failed
-        if not msgs["hint"]:
-            msgs["hint"] = cp.hint
+        # Source 1: cache
+        if cached_phases and i < len(cached_phases):
+            cached_msgs = cached_phases[i].get("messages", {})
+            # Use cached values, falling back per-key if any are missing/null
+            for key in ("hint", "success", "wrong_order", "wrong_ids", "returning"):
+                msgs[key] = cached_msgs.get(key) or None
+
+        # Source 2: hardcoded fallback for any missing keys
+        if i < len(HARDCODED_NARRATION):
+            hardcoded = HARDCODED_NARRATION[i]
+            for key in ("hint", "success", "wrong_order", "wrong_ids", "returning"):
+                if not msgs.get(key):
+                    msgs[key] = hardcoded[key]
+
+        # Source 3: generic default for any still-missing keys
         for key in ("success", "wrong_order", "wrong_ids", "returning"):
-            if not msgs[key]:
+            if not msgs.get(key):
                 msgs[key] = _default(key, location)
+        if not msgs.get("hint"):
+            msgs["hint"] = cp.hint
 
-        print("done")
         results.append(msgs)
 
     return results
+
+
+# ── Private helpers ──────────────────────────────────────────────────────────
+
+def _load_cache(map_id: int) -> list | None:
+    """Load cached narration phases for a given map ID, or None."""
+    if not os.path.exists(CACHE_FILE):
+        return None
+    try:
+        with open(CACHE_FILE, "r") as f:
+            data = json.load(f)
+        map_data = data.get(str(map_id))
+        if map_data and "phases" in map_data:
+            return map_data["phases"]
+    except (json.JSONDecodeError, KeyError, TypeError) as e:
+        print(f"  ⚠  Cache file corrupt or unreadable: {e}")
+    return None
 
 
 def _default(key: str, location: str) -> str:

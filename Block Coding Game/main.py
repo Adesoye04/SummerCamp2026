@@ -17,8 +17,9 @@ def run_game():
 
     misty.disable_hazards()
 
-    print("\nGenerating narration (this takes ~30 seconds)...")
-    narration = narrator.pre_generate(active_map.checkpoints)
+    print("\nLoading narration...")
+    from maps import ACTIVE_MAP_ID
+    narration = narrator.pre_generate(active_map.checkpoints, map_id=ACTIVE_MAP_ID)
 
     misty.led_ready()
     misty.speak(
