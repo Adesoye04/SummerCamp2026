@@ -58,6 +58,10 @@ the two **large** triangles (21 ↔ 25) and the two **small** triangles (22 ↔ 
 4. **Buzzer feedback** — on a press, every piece is scored as **correct**,
    **right-spot-needs-a-turn**, **wrong-spot**, or **missing**, and Misty speaks
    a short, encouraging summary with a matching face, LED colour, and gesture.
+5. **Timer & point** — each board runs its own countdown (house 3 min, sword
+   4 min). Misty announces the time at the start, reminds the child at each
+   minute and again 20 seconds from the end, and awards **one point** if the
+   whole shape is finished before the buzzer count runs out.
 
 A child-facing window shows the house outline plus a row of seven chips that
 fill with a checkmark as pieces are confirmed. The camera feed is **not** shown
@@ -138,8 +142,8 @@ python3 tangram_house_misty.py --no-robot --camera 1 --show-camera
 | `--show-camera` | off | Show the ArUco debug overlay window |
 | `--touch-buzzer` | off | Also accept a tap on Misty's head as the buzzer (needs the SDK) |
 | `--llm-feedback` | off | Rephrase feedback through a local Ollama model |
-| `--timer S` | `0` (off) | Countdown seconds; `0` = no timer |
-| `--timer-warning S` | `60` | Seconds-left at which Misty gives the "one minute" warning |
+| `--timer S` | per-shape | Countdown length. Omit to use the built-in per-shape timers (**house 3 min, sword 4 min**); `0` = no timer; any positive `S` forces that same length on every shape |
+| `--final-warning S` | `20` | Seconds-left at which Misty gives her final "hurry" warning (the whole-minute reminders are automatic) |
 | `--face-camera N` | `0` | Camera index for face tracking |
 | `--no-face-track` | off | Disable Misty's head tracking |
 | `--misty-face-camera` | off | Use Misty's own camera for face tracking |
@@ -150,10 +154,32 @@ python3 tangram_house_misty.py --no-robot --camera 1 --show-camera
 ## Notes for the study
 
 ### Timer
-This house board is the **Level 1, ages 9–12** card, so the timer is **off by
-default**. It's fully built in for the younger groups — add `--timer 120` (and
-optionally `--timer-warning 60`) and Misty will count down, warn at one minute,
-and announce time's up without hard-stopping the child.
+Each board now runs its own countdown, on by default: **3 minutes for the house,
+4 minutes for the sword**. The clock starts *after* Misty finishes the welcome
+intro, so the spoken setup doesn't eat into the child's time. During the round
+Misty speaks the time aloud:
+
+- **At the start** — "You have three minutes to build the house… ready, set, go!"
+- **At every whole minute remaining** — e.g. the house gets a reminder at 2:00
+  and 1:00 left; the sword at 3:00, 2:00, and 1:00 left.
+- **A final warning 20 seconds before the end** — "Only 20 seconds left! Hurry!"
+  (move this with `--final-warning S`).
+
+Nothing is hard-stopped — at zero, Misty just announces time's up.
+
+To override: `--timer 0` turns the timer off entirely, and `--timer 120` (or any
+positive number) forces that same length on **both** boards, ignoring the
+per-shape defaults.
+
+### Scoring
+A child earns **one point** for a board only if the full shape is confirmed
+correct (all seven pieces green on a buzzer press) **before the timer runs out**.
+If the clock reaches zero first, that round scores **no point** — and the result
+is locked, so finishing late doesn't sneak one in. Either way Misty stays warm
+("no point this round, but let's try again!") and the board resets for another
+attempt or a board swap. The score is cumulative across rounds and Misty
+announces the running total on each point. With the timer off (`--timer 0`),
+completing the shape always earns the point.
 
 ### Physical GPIO buzzer
 The child presses a real button, not the keyboard. A clean hook is already in
