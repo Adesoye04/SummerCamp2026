@@ -20,3 +20,6 @@ mfrc522
 # on the Pi to avoid pulling in a GUI display stack.
 opencv-contrib-python-headless
 numpy
+
+# Excel game logging — game_logger.py
+openpyxl
