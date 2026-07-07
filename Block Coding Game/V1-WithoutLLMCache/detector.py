@@ -75,39 +75,29 @@ def _ensure_init():
     _card_map = _load_card_map()
 
 
-# ── Core scanning loop ────────────────────────────────────────────────────────
+# ── Background first-tag watcher ──────────────────────────────────────────────
 
-def _scan_loop(slots: list, done_event: threading.Event,
-               first_tag_event: threading.Event | None = None):
-    """Background thread: continuously poll readers.
-
-    Slots are always live — placing a new card on a reader replaces whatever
-    was there before, and removing a card clears the slot.
-    Sets first_tag_event the moment any card is first detected.
-    """
-    first_seen = False
-    while not done_event.is_set():
-        for idx in range(N_READERS):
-            name, reader = _readers[idx]
-            uid = rfid_reader.scan_once(name, reader)
-            prev = slots[idx]
-
-            if uid and uid != prev:
-                slots[idx] = uid
-                game_id = _card_map.get(uid)
-                label = f"Game ID {game_id}" if game_id else f"UNKNOWN UID ({uid})"
-                filled = sum(1 for s in slots if s is not None)
-                action = "replaced" if prev else "placed"
-                print(f"  [Reader {idx+1}] {label} ({action})  ({filled}/{N_READERS} slots filled)")
-                if not first_seen and first_tag_event is not None:
-                    first_seen = True
-                    first_tag_event.set()
-            elif not uid and prev:
-                slots[idx] = None
-                filled = sum(1 for s in slots if s is not None)
-                print(f"  [Reader {idx+1}] cleared  ({filled}/{N_READERS} slots filled)")
-
+def _first_tag_watcher(done_event: threading.Event,
+                       first_tag_event: threading.Event):
+    """Lightweight background thread — only watches for the very first card tap
+    so the game timer can start. Stops as soon as first_tag_event is set."""
+    while not done_event.is_set() and not first_tag_event.is_set():
+        for name, reader in _readers:
+            if rfid_reader.scan_once(name, reader):
+                first_tag_event.set()
+                return
         time.sleep(POLL_INTERVAL)
+
+
+# ── Snapshot read ─────────────────────────────────────────────────────────────
+
+def _read_snapshot() -> list[str | None]:
+    """Read all readers once and return their current UIDs (or None)."""
+    result = []
+    for name, reader in _readers:
+        uid = rfid_reader.scan_once(name, reader)
+        result.append(uid if uid else None)
+    return result
 
 
 # ── Tag-removal gate ──────────────────────────────────────────────────────────
@@ -161,15 +151,14 @@ def run_detector(n_slots: int = N_READERS,
     """
     _ensure_init()
 
-    slots: list[str | None] = [None] * n_slots
     done_event      = threading.Event()
     submitted_event = threading.Event()
 
-    # Start background scanning thread
-    scan_thread = threading.Thread(target=_scan_loop,
-                                   args=(slots, done_event, first_tag_event),
-                                   daemon=True)
-    scan_thread.start()
+    # Background thread only watches for first card (starts game timer)
+    if first_tag_event is not None and not first_tag_event.is_set():
+        threading.Thread(target=_first_tag_watcher,
+                         args=(done_event, first_tag_event),
+                         daemon=True).start()
 
     # Unblock submitted_event when Space is pressed
     def _wait_for_space():
@@ -186,8 +175,7 @@ def run_detector(n_slots: int = N_READERS,
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
         submitted_event.set()
 
-    key_thread = threading.Thread(target=_wait_for_space, daemon=True)
-    key_thread.start()
+    threading.Thread(target=_wait_for_space, daemon=True).start()
 
     # Also unblock if the game-over timer fires
     def _watch_game_over():
@@ -203,19 +191,20 @@ def run_detector(n_slots: int = N_READERS,
     print()
 
     submitted_event.wait()
-
-    # Stop scan thread
     done_event.set()
-    scan_thread.join(timeout=1.0)
 
-    # If zero cards placed → abort (equivalent to pressing Q in ArUco version)
-    if all(s is None for s in slots):
+    # Snapshot: read all readers at the moment Space was pressed
+    snapshot = _read_snapshot()
+    print(f"  [RFID] Snapshot: {snapshot}")
+
+    # If zero cards present → abort
+    if all(uid is None for uid in snapshot):
         print("[RFID] No cards detected — aborting game.")
         return None
 
-    # Translate UIDs → game integers (0 for empty / unknown slots)
+    # Translate UIDs → game integers
     result: list[int] = []
-    for idx, uid in enumerate(slots):
+    for idx, uid in enumerate(snapshot):
         if uid is None:
             game_id = 0
         else:
@@ -224,7 +213,7 @@ def run_detector(n_slots: int = N_READERS,
                 print(f"  ⚠  Reader {idx+1}: UID {uid} not in card map — treating as 0.")
         result.append(game_id)
 
-    # Trim trailing zeros (empty trailing slots don't count as part of the sequence)
+    # Trim trailing zeros
     while result and result[-1] == 0:
         result.pop()
 

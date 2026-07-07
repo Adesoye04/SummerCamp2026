@@ -3,6 +3,8 @@ import time
 
 import misty
 import narrator
+import id_scanner
+from recorder     import GameRecorder
 from maps         import MAPS
 from detector     import run_detector, wait_for_tags_removed
 from validator    import validate_and_message, ValidationResult
@@ -27,31 +29,32 @@ def select_map():
         print(f"  Please enter one of: {list(available.keys())}")
 
 
-def run_game():
-    active_map = select_map()
-    total      = len(active_map.checkpoints)
+def run_game(active_map, players: list[dict]):
+    total = len(active_map.checkpoints)
+    p1    = players[0]["name"]
+    p2    = players[1]["name"]
 
-    player_name = input("Player name: ").strip() or "Unknown"
-    logger = GameLogger(player_name=player_name, map_name=active_map.name)
+    logger   = GameLogger(players=players, map_name=active_map.name)
     logger.start()
-    print(f"  Logging this playthrough as Player ID #{logger.player_id}")
+    recorder = GameRecorder(session_id=logger.session_id)
+    recorder.start()
 
     print(f"\n{'='*50}")
     print(f"  MISTY MAZE GAME")
-    print(f"  Map    : {active_map.name}")
-    print(f"  Rounds : {total}")
+    print(f"  Map     : {active_map.name}")
+    print(f"  Players : {p1} & {p2}")
+    print(f"  Rounds  : {total}")
     print(f"{'='*50}\n")
 
     misty.set_volume()
     misty.disable_hazards()
 
     # ── Timer setup ───────────────────────────────────────────────────────────
-    # Timer starts once the intro speech finishes AND the first RFID tag is placed.
     first_tag_event = threading.Event()
     game_over_event = threading.Event()
 
     def _timer_thread():
-        first_tag_event.wait()          # wait for first card placement
+        first_tag_event.wait()
         print(f"\n  [TIMER] 8-minute game clock started.")
         game_over_event.wait(timeout=GAME_DURATION)
         if not game_over_event.is_set():
@@ -65,12 +68,11 @@ def run_game():
     intro = narrator.load_intro()
 
     misty.led_ready()
-    misty.speak(intro["welcome"])
+    misty.speak(f"Welcome {p1} and {p2}! I am so excited to play with you today!")
     misty.speak(f"Today's map is {active_map.name} with {total} rounds.")
     misty.speak(intro["how_to_play"])
     misty.speak(intro["good_luck"])
 
-    # Prefetch narration for phase 1 while Misty finishes speaking
     cp0 = active_map.checkpoints[0]
     narrator.prefetch(1, total, cp0.location, cp0.sequence)
 
@@ -78,15 +80,12 @@ def run_game():
     for i, checkpoint in enumerate(active_map.checkpoints, 1):
         is_last = (i == total)
 
-        # If timer already expired before this phase even starts, end now
         if game_over_event.is_set():
             break
 
         print(f"\n── Phase {i} of {total} ──────────────────────────────")
         print(f"   Location   : {checkpoint.location}")
         print(f"   Sequence   : {checkpoint.sequence}")
-        print(f"   Drive map  : {checkpoint.drive_map}")
-        print(f"   Return map : {checkpoint.return_map}")
 
         misty.led_ready()
         misty.speak(narrator.live(i, total, checkpoint.location, checkpoint.sequence, "hint"))
@@ -104,17 +103,17 @@ def run_game():
                 game_over_event=game_over_event,
             )
 
-            # Timer expired mid-wait
             if game_over_event.is_set():
                 break
 
-            # Player aborted (pressed Enter with no cards)
             if scanned is None:
                 print("\nGame aborted by player.")
                 misty.speak("Game cancelled. See you next time!")
                 misty.led(0, 0, 0)
                 misty.enable_hazards()
                 logger.end(outcome="Aborted")
+                recorder.stop()
+                id_scanner.update_play_counts(players)
                 return
 
             attempts += 1
@@ -134,7 +133,6 @@ def run_game():
                 misty.speak(narrator.live(i, total, checkpoint.location,
                                           checkpoint.sequence, "success"))
 
-                # Prefetch next phase's narration while driving
                 if not is_last:
                     next_cp = active_map.checkpoints[i]
                     narrator.prefetch(i + 1, total, next_cp.location, next_cp.sequence)
@@ -168,14 +166,12 @@ def run_game():
                 misty.speak(narrator.live(i, total, checkpoint.location,
                                           checkpoint.sequence, "wrong_order"))
                 misty.led_ready()
-                print("   Try again.\n")
 
             else:
                 misty.led_error()
                 misty.speak(narrator.live(i, total, checkpoint.location,
                                           checkpoint.sequence, "wrong_ids"))
                 misty.led_ready()
-                print("   Try again.\n")
 
         if game_over_event.is_set():
             break
@@ -186,7 +182,7 @@ def run_game():
         print("  TIME'S UP — GAME OVER")
         print(f"{'='*50}\n")
         misty.led_error()
-        misty.speak("Time is up! Goodbye everyone, you did a great job today!")
+        misty.speak(f"Time is up! Amazing effort {p1} and {p2}. Goodbye!")
         misty.led(0, 0, 0)
         logger.end(outcome="TimeUp")
     else:
@@ -195,8 +191,33 @@ def run_game():
         print(f"{'='*50}\n")
         logger.end(outcome="Completed")
 
+    recorder.stop()
     misty.enable_hazards()
+    id_scanner.update_play_counts(players)
+
+
+def run_forever():
+    """Main loop: scan IDs → play game → repeat."""
+    print("\n" + "="*50)
+    print("  MISTY MAZE — STARTING UP")
+    print("="*50)
+
+    active_map = select_map()
+
+    while True:
+        players = id_scanner.wait_for_players(n=2)
+
+        try:
+            run_game(active_map, players)
+        except Exception as e:
+            print(f"\n[ERROR] Game crashed: {e}")
+            misty.led_error()
+            misty.speak("Oops, something went wrong. Please ask a grown-up for help.")
+
+        print("\n  Game over. Ready for the next players!")
+        misty.led_ready()
+        time.sleep(3)
 
 
 if __name__ == "__main__":
-    run_game()
+    run_forever()

@@ -30,10 +30,11 @@ MAPS: dict[int, Map] = {
         name = "Map 1 — Out and Back",
         checkpoints = [
 
-            # Phase 1: forward, forward
+            # Phase 1: School
             Checkpoint(
                 sequence   = [1, 1],
                 hint       = "Leg one — place two cards to send me forward.",
+                location   = "School",
                 drive_map  = [
                     ("forward",  DISTANCE),
                     ("forward",  DISTANCE),
@@ -46,11 +47,11 @@ MAPS: dict[int, Map] = {
                 ],
             ),
 
-            # Phase 2: forward, left, forward, left, forward
+            # Phase 2: Supermarket
             Checkpoint(
                 sequence   = [1, 2, 1, 2, 1],
                 hint       = "Leg two — five cards. Two left turns! Heading to the supermarket.",
-                location   = "supermarket",
+                location   = "Supermarket",
                 drive_map  = [
                     ("forward",   DISTANCE),
                     ("turn_left", TURN),
@@ -69,10 +70,11 @@ MAPS: dict[int, Map] = {
                 ],
             ),
 
-            # Phase 3: forward, left, forward, right, forward
+            # Phase 3: Ice-cream Shop
             Checkpoint(
                 sequence   = [1, 2, 1, 3, 1],
                 hint       = "Leg three — five cards. A left then a right turn!",
+                location   = "Ice-cream Shop",
                 drive_map  = [
                     ("forward",    DISTANCE),
                     ("turn_left",  TURN),
@@ -91,11 +93,11 @@ MAPS: dict[int, Map] = {
                 ],
             ),
 
-            # Phase 4: forward, left, forward, forward, left, forward
+            # Phase 4: Restaurant
             Checkpoint(
                 sequence   = [1, 2, 1, 1, 2, 1],
-                hint       = "Leg four — six cards. Watch for the double forward! Heading to school.",
-                location   = "school",
+                hint       = "Leg four — six cards. Watch for the double forward! Heading to the restaurant.",
+                location   = "Restaurant",
                 drive_map  = [
                     ("forward",   DISTANCE),
                     ("turn_left", TURN),
@@ -116,10 +118,11 @@ MAPS: dict[int, Map] = {
                 ],
             ),
 
-            # Phase 5: forward, left, forward, forward, right, forward
+            # Phase 5: Space Center
             Checkpoint(
                 sequence   = [1, 2, 1, 1, 3, 1],
-                hint       = "Final leg — six cards. Double forward then a right turn!",
+                hint       = "Final leg — six cards. Double forward then a right turn! Heading to the Space Center!",
+                location   = "Space Center",
                 drive_map  = [
                     ("forward",    DISTANCE),
                     ("turn_left",  TURN),
@@ -155,10 +158,11 @@ MAPS: dict[int, Map] = {
         # Even legs face South -> right,fwd,left,fwd,fwd  [3,1,2,1,1]
         checkpoints = [
 
-            # Phase 1: straight north from home
+            # Phase 1: School
             Checkpoint(
                 sequence   = [1, 1],
                 hint       = "Leg one — two cards to send me forward!",
+                location   = "School",
                 drive_map  = [
                     ("forward", DISTANCE),
                     ("forward", DISTANCE),
@@ -166,11 +170,11 @@ MAPS: dict[int, Map] = {
                 return_map = [("turn_180",)],
             ),
 
-            # Phase 2: from D1 facing South to supermarket (-30, 0)
+            # Phase 2: Supermarket
             Checkpoint(
                 sequence   = [3, 1, 2, 1, 1],
                 hint       = "Leg two — five cards. A right turn, then a left! Heading to the supermarket.",
-                location   = "supermarket",
+                location   = "Supermarket",
                 drive_map  = [
                     ("turn_right", TURN),
                     ("forward",    DISTANCE),
@@ -181,10 +185,11 @@ MAPS: dict[int, Map] = {
                 return_map = [("turn_180",)],
             ),
 
-            # Phase 3: from supermarket facing North to (-30, 60)
+            # Phase 3: Ice-cream Shop
             Checkpoint(
                 sequence   = [1, 1],
                 hint       = "Leg three — two cards straight ahead again!",
+                location   = "Ice-cream Shop",
                 drive_map  = [
                     ("forward", DISTANCE),
                     ("forward", DISTANCE),
@@ -192,11 +197,11 @@ MAPS: dict[int, Map] = {
                 return_map = [("turn_180",)],
             ),
 
-            # Phase 4: from D3 facing South to school (-60, 0)
+            # Phase 4: Restaurant
             Checkpoint(
                 sequence   = [3, 1, 2, 1, 1],
-                hint       = "Leg four — five cards. Right then left again! Heading to school.",
-                location   = "school",
+                hint       = "Leg four — five cards. Right then left again! Heading to the restaurant.",
+                location   = "Restaurant",
                 drive_map  = [
                     ("turn_right", TURN),
                     ("forward",    DISTANCE),
@@ -207,10 +212,11 @@ MAPS: dict[int, Map] = {
                 return_map = [("turn_180",)],
             ),
 
-            # Phase 5: from school facing North to (-60, 60) — final leg, no return
+            # Phase 5: Space Center — final leg, no return
             Checkpoint(
                 sequence   = [1, 1],
-                hint       = "Final leg — two cards straight to the finish!",
+                hint       = "Final leg — two cards straight to the Space Center!",
+                location   = "Space Center",
                 drive_map  = [
                     ("forward", DISTANCE),
                     ("forward", DISTANCE),

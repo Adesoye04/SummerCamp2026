@@ -7,10 +7,10 @@ MISTY_IP = "10.42.0.197"
 BASE_URL  = f"http://{MISTY_IP}/api"
 
 # ── ✏️  Calibration ────────────────────────────────────────────────────────────
-DRIVE_SPEED    = 35.0   # working value on this robot
-TURN_SPEED     = 40.0   # increased for faster turns — recalibrate DEG_PER_SECOND
-CM_PER_SECOND  = 20.0   # TODO: calibrate
-DEG_PER_SECOND = 22.75  # recalibrated for TURN_SPEED=40
+DRIVE_SPEED    = 35.0
+TURN_SPEED     = 20.0
+CM_PER_SECOND  = 20.0
+DEG_PER_SECOND = 15.17
 
 # ── ✏️  Voice / Audio ─────────────────────────────────────────────────────────
 VOICE        = "en-us-x-sfg-local"  # Android TTS voice installed on this robot
