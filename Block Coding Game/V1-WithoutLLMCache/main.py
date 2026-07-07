@@ -31,18 +31,16 @@ def select_map():
 
 
 def _return_misty_home(cp: Checkpoint, map_id: int, drove_out: bool = False):
-    """Execute the path that returns Misty to Home(0,0) on Map 2.
+    """Bring Misty back to Home(0,0) after a timer expiry.
 
-    drove_out: True when drive_map completed but return_map has not run yet.
-               In that case we execute return_map first (turn_180), then home.
+    drove_out: True when drive_map ran but return_map hasn't yet — execute
+               return_map first, then home_on_timeout (Map 2 only).
     """
-    if map_id != 2:
-        return
     if drove_out and cp.return_map:
         misty.execute_drive_map(cp.return_map)
-    if cp.return_home_map:
+    if map_id == 2 and cp.home_on_timeout:
         misty.speak("Time is up! I am heading back home now.")
-        misty.execute_drive_map(cp.return_home_map)
+        misty.execute_drive_map(cp.home_on_timeout)
 
 
 def run_game(map_id: int, active_map, players: list[dict]):
@@ -94,8 +92,8 @@ def run_game(map_id: int, active_map, players: list[dict]):
     narrator.prefetch(1, total, checkpoints[0].location, checkpoints[0].sequence)
 
     # ── Game loop ─────────────────────────────────────────────────────────────
-    last_completed_cp: Checkpoint | None = None  # Map 2: last fully executed cp
-    outcome = "Completed"
+    outcome              = "Completed"
+    last_completed_cp: Checkpoint | None = None   # Map 2: last fully-returned cp
 
     for i, checkpoint in enumerate(checkpoints, 1):
         is_last = (i == total)
@@ -103,19 +101,6 @@ def run_game(map_id: int, active_map, players: list[dict]):
         if game_over_event.is_set():
             outcome = "TimeUp"
             break
-
-        # Map 2: silently drive to this checkpoint's starting position when
-        # intermediate checkpoints were skipped by the randomiser.
-        if checkpoint.auto_transit:
-            print(f"\n   [Auto-transit] Moving to starting position for {checkpoint.location}...")
-            misty.speak(f"I am on my way to the {checkpoint.location} area now!")
-            misty.execute_drive_map(checkpoint.auto_transit)
-            if game_over_event.is_set():
-                _return_misty_home(
-                    last_completed_cp or checkpoint, map_id, drove_out=False
-                )
-                outcome = "TimeUp"
-                break
 
         print(f"\n── Round {i} of {total} ──────────────────────────────")
         print(f"   Location   : {checkpoint.location}")
@@ -190,6 +175,7 @@ def run_game(map_id: int, active_map, players: list[dict]):
                                               checkpoint.sequence, "returning"))
                     print(f"   Returning...")
                     misty.execute_drive_map(checkpoint.return_map)
+                    last_completed_cp = checkpoint
 
                     if game_over_event.is_set():
                         _return_misty_home(checkpoint, map_id, drove_out=False)
@@ -206,8 +192,6 @@ def run_game(map_id: int, active_map, players: list[dict]):
                         recorder.stop()
                         id_scanner.update_play_counts(players)
                         return
-
-                last_completed_cp = checkpoint
 
                 if game_over_event.is_set():
                     outcome = "TimeUp"
@@ -241,7 +225,8 @@ def run_game(map_id: int, active_map, players: list[dict]):
         print(f"\n{'='*50}")
         print("  TIME'S UP — GAME OVER")
         print(f"{'='*50}\n")
-        # Map 2: return Misty home from last completed checkpoint
+        # Map 2: if timer fired while Misty was waiting for RFID input (not
+        # mid-drive), she is at last_completed_cp's resting position — drive home.
         if map_id == 2 and last_completed_cp is not None:
             _return_misty_home(last_completed_cp, map_id, drove_out=False)
         misty.led_error()
