@@ -155,22 +155,32 @@ MAPS: dict[int, Map] = {
         name   = "Map 2 — Waypoints",
         map_id = 2,
         # Fixed continuous path: School → Ice-cream Shop → Space Center → Home.
-        # Misty never returns to Home between checkpoints; each leg picks up
-        # exactly where the last one left off.  Home is the final puzzle —
-        # children must solve the route back.
+        # Misty never returns home between checkpoints. Home is the final puzzle.
         #
         # Physical layout (30 cm grid, home = origin, North = up):
-        #   D1 (0,60)  D3 (-30,60)  D5 (-60,60)
-        #   Home(0,0)  D2 (-30,0)   D4 (-60,0)
+        #   School(D1,0,60)  Ice-cream(D3,-30,60)  SpaceCenter(D5,-60,60)
+        #   Home(0,0)        D2(-30,0)              D4(-60,0)
         #
-        # Direction Misty faces at the START of each leg:
-        #   Leg 1 (Home→D1):  North  (start of game)
-        #   Leg 2 (D1→D3):    South  (after turn_180 return_map on leg 1)
-        #   Leg 3 (D3→D5):    North  (after turn_right return_map on leg 2, W→N)
-        #   Leg 4 (D5→Home):  East   (after turn_180 return_map on leg 3, W→E)
+        # Allowed corridors — Misty CANNOT cross the top row between checkpoints:
+        #   Home ↔ D1   (vertical,   column x=0)
+        #   Home ↔ D2   (horizontal, bottom row)
+        #   D2   ↔ D4   (horizontal, bottom row)
+        #   D2   ↔ D3   (vertical,   column x=-30)
+        #   D4   ↔ D5   (vertical,   column x=-60)
+        #
+        # Every inter-checkpoint leg dips down to the bottom row:
+        #   Leg 2  D1 → Home → D2 → D3
+        #   Leg 3  D3 → D2  → D4 → D5
+        #   Leg 4  D5 → D4  → D2 → Home
+        #
+        # Facing direction at start of each leg:
+        #   Leg 1: North (game start)
+        #   Leg 2: South (after turn_180 at D1)
+        #   Leg 3: South (after turn_180 at D3)
+        #   Leg 4: South (after turn_180 at D5)
         checkpoints = [
 
-            # Leg 1: School — Home(N) → D1(0,60)
+            # Leg 1: Home(N) → School(D1)
             # fwd, fwd
             Checkpoint(
                 sequence        = [1, 1],
@@ -180,80 +190,89 @@ MAPS: dict[int, Map] = {
                     ("forward", DISTANCE),
                     ("forward", DISTANCE),
                 ],
-                # At D1 facing North → turn_180 → faces South (ready for Leg 2)
+                # D1(N) → turn_180 → D1 faces S
                 return_map      = [("turn_180",)],
-                # After return_map: D1(0,60) facing South → fwd×2 → Home → turn_180 (N)
+                # D1(S) → fwd×2(→Home) → turn_180(→N)
                 home_on_timeout = [
-                    ("forward",  DISTANCE),
-                    ("forward",  DISTANCE),
+                    ("forward", DISTANCE),
+                    ("forward", DISTANCE),
                     ("turn_180",),
                 ],
             ),
 
-            # Leg 2: Ice-cream Shop — D1(S) → D3(-30,60)
-            # right(S→W), fwd
+            # Leg 2: School(D1,S) → Ice-cream(D3)
+            # Path uses bottom row: D1 → Home → D2 → D3
+            # fwd,fwd(→Home), right(S→W), fwd(→D2), right(W→N), fwd,fwd(→D3)
             Checkpoint(
-                sequence        = [3, 1],
-                hint            = "Turn Right then Forward to the Ice-cream Shop!",
+                sequence        = [1, 1, 3, 1, 3, 1, 1],
+                hint            = "Forward, Forward, Right, Forward, Right, Forward, Forward to the Ice-cream Shop!",
                 location        = "Ice-cream Shop",
                 drive_map       = [
+                    ("forward",    DISTANCE),
+                    ("forward",    DISTANCE),
                     ("turn_right", TURN),
                     ("forward",    DISTANCE),
+                    ("turn_right", TURN),
+                    ("forward",    DISTANCE),
+                    ("forward",    DISTANCE),
                 ],
-                # At D3 facing West → turn_right(W→N) → faces North (ready for Leg 3)
-                return_map      = [("turn_right", TURN)],
-                # After return_map: D3(-30,60) facing North
-                # → right(N→E), fwd×2(→D1), right(E→S), fwd×2(→Home), turn_180(→N)
+                # D3(N) → turn_180 → D3 faces S
+                return_map      = [("turn_180",)],
+                # D3(S) → fwd×2(→D2) → left(S→E) → fwd(→Home) → left(E→N)
                 home_on_timeout = [
-                    ("turn_right", TURN),
-                    ("forward",    DISTANCE),
-                    ("forward",    DISTANCE),
-                    ("turn_right", TURN),
-                    ("forward",    DISTANCE),
-                    ("forward",    DISTANCE),
-                    ("turn_180",),
-                ],
-            ),
-
-            # Leg 3: Space Center — D3(N) → D5(-60,60)
-            # left(N→W), fwd
-            Checkpoint(
-                sequence        = [2, 1],
-                hint            = "Turn Left then Forward to the Space Center!",
-                location        = "Space Center",
-                drive_map       = [
+                    ("forward",   DISTANCE),
+                    ("forward",   DISTANCE),
                     ("turn_left", TURN),
                     ("forward",   DISTANCE),
-                ],
-                # At D5 facing West → turn_180 → faces East (ready for Leg 4)
-                return_map      = [("turn_180",)],
-                # After return_map: D5(-60,60) facing East
-                # → fwd×2(→D1(0,60)), right(E→S), fwd×2(→Home), turn_180(→N)
-                home_on_timeout = [
-                    ("forward",    DISTANCE),
-                    ("forward",    DISTANCE),
-                    ("turn_right", TURN),
-                    ("forward",    DISTANCE),
-                    ("forward",    DISTANCE),
-                    ("turn_180",),
+                    ("turn_left", TURN),
                 ],
             ),
 
-            # Leg 4: Home — D5(E) → Home(0,0)
-            # fwd, fwd (→D1), right(E→S), fwd, fwd (→Home)
+            # Leg 3: Ice-cream(D3,S) → Space Center(D5)
+            # Path uses bottom row: D3 → D2 → D4 → D5
+            # fwd,fwd(→D2), right(S→W), fwd(→D4), right(W→N), fwd,fwd(→D5)
             Checkpoint(
-                sequence        = [1, 1, 3, 1, 1],
-                hint            = "Forward, Forward, Right, Forward, Forward — guide me all the way home!",
-                location        = "Home",
+                sequence        = [1, 1, 3, 1, 3, 1, 1],
+                hint            = "Forward, Forward, Right, Forward, Right, Forward, Forward to the Space Center!",
+                location        = "Space Center",
                 drive_map       = [
                     ("forward",    DISTANCE),
                     ("forward",    DISTANCE),
                     ("turn_right", TURN),
                     ("forward",    DISTANCE),
+                    ("turn_right", TURN),
+                    ("forward",    DISTANCE),
                     ("forward",    DISTANCE),
                 ],
-                # At Home facing South → turn_180 → faces North (ready for next game)
+                # D5(N) → turn_180 → D5 faces S
                 return_map      = [("turn_180",)],
+                # D5(S) → fwd×2(→D4) → left(S→E) → fwd×2(→Home) → left(E→N)
+                home_on_timeout = [
+                    ("forward",   DISTANCE),
+                    ("forward",   DISTANCE),
+                    ("turn_left", TURN),
+                    ("forward",   DISTANCE),
+                    ("forward",   DISTANCE),
+                    ("turn_left", TURN),
+                ],
+            ),
+
+            # Leg 4: Space Center(D5,S) → Home
+            # Path uses bottom row: D5 → D4 → D2 → Home
+            # fwd,fwd(→D4), left(S→E), fwd,fwd(→Home)
+            Checkpoint(
+                sequence        = [1, 1, 2, 1, 1],
+                hint            = "Forward, Forward, Left, Forward, Forward — bring me back home!",
+                location        = "Home",
+                drive_map       = [
+                    ("forward",   DISTANCE),
+                    ("forward",   DISTANCE),
+                    ("turn_left", TURN),
+                    ("forward",   DISTANCE),
+                    ("forward",   DISTANCE),
+                ],
+                # Home(E) → turn_left(E→N) → ready for next game
+                return_map      = [("turn_left", TURN)],
                 home_on_timeout = [],  # already home
             ),
         ],
