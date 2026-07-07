@@ -39,7 +39,8 @@ INTRO_PROMPTS = {
         "Welcome the children to Misty Maze. One excited sentence, under 10 words."
     ),
     "how_to_play": (
-        "Explain: card 1 forward, card 2 left, card 3 right, then press the button. "
+        "Explain: the Forward card moves me forward, the Turn Left card turns me left, "
+        "the Turn Right card turns me right, then press the button. "
         "One sentence, under 15 words."
     ),
     "good_luck": (

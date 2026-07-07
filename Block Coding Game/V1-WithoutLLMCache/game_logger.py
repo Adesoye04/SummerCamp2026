@@ -1,20 +1,10 @@
 """
-Excel game logging via openpyxl, for research-study tracking.
+Excel game logging — two-player sessions with ArUco ID tracking.
 
-Writes three sheets in one workbook (created on first run, appended to after):
-
-  Sessions      — one row per full game played (start/end, duration, outcome)
-  Attempts      — one row per RFID scan submission at a checkpoint
-  PlayerSummary — one row per playthrough, rolling up that playthrough's
-                  Sessions + Attempts rows into a single flat view
-
-IMPORTANT: PlayerID identifies a single *playthrough*, not a person. If the
-same kid (e.g. "Alex") plays twice, each play gets its own new PlayerID —
-the two runs are never merged. This is deliberate: the study needs to be
-able to look at two plays by the same name as independent data points,
-since a player may behave differently each time. The "Player Name" field
-is free-text and purely for human-readability; it plays no role in lookup
-or identity.
+Sheets:
+  Sessions      — one row per game (both players, map, outcome, duration)
+  Attempts      — one row per RFID submission at a checkpoint
+  PlayerSummary — one row per game, rolling up accuracy and score
 """
 
 from datetime import datetime
@@ -25,18 +15,24 @@ from openpyxl import Workbook, load_workbook
 LOG_PATH = Path(__file__).parent / "game_log.xlsx"
 
 SESSIONS_HEADER = [
-    "PlayerID", "Player Name", "Date", "Map", "Start Time", "End Time",
-    "Duration (s)", "Outcome",
+    "SessionID",
+    "Player1 Name", "Player1 ArUco", "Player1 Age", "Player1 Plays",
+    "Player2 Name", "Player2 ArUco", "Player2 Age", "Player2 Plays",
+    "Date", "Map", "Start Time", "End Time", "Duration (s)", "Outcome",
 ]
 
 ATTEMPTS_HEADER = [
-    "PlayerID", "Player Name", "Date", "Map", "Checkpoint", "Attempt #",
+    "SessionID", "Player1 Name", "Player2 Name",
+    "Date", "Map", "Checkpoint", "Attempt #",
     "Scanned RFIDs", "Expected RFIDs", "Result", "Correct?",
     "Start Time", "End Time", "Duration (s)",
 ]
 
 SUMMARY_HEADER = [
-    "PlayerID", "Player Name", "Date", "Map", "Outcome",
+    "SessionID",
+    "Player1 Name", "Player1 ArUco",
+    "Player2 Name", "Player2 ArUco",
+    "Date", "Map", "Outcome",
     "Total Attempts", "Correct Attempts", "Incorrect Attempts",
     "Accuracy (%)", "Game Duration (s)",
 ]
@@ -59,39 +55,48 @@ def _ensure_workbook() -> Workbook:
     return wb
 
 
-def _next_player_id(wb: Workbook) -> int:
-    """One new ID per playthrough — PlayerSummary row count is the source of truth."""
-    return wb["PlayerSummary"].max_row  # header is row 1, so first player gets ID 1
-
-
 class GameLogger:
-    """One instance per game session; call start(), log_attempt(), end()."""
+    """One instance per game. Call start(), log_attempt()*, end()."""
 
-    def __init__(self, player_name: str, map_name: str):
-        self.player_name = player_name
+    def __init__(self, players: list[dict], map_name: str):
+        """
+        players: list of 2 dicts from id_scanner.wait_for_players()
+                 each has keys: aruco_id, name, age, plays
+        """
+        self.players  = players
         self.map_name = map_name
-        self.player_id: int | None = None
+        self.session_id: str | None = None
         self._session_start: datetime | None = None
         self._checkpoint_start: datetime | None = None
         self._attempt_rows: list[dict] = []
+
+    def _p(self, idx: int) -> dict:
+        return self.players[idx] if idx < len(self.players) else {}
 
     # ── session-level ──────────────────────────────────────────────────────
 
     def start(self):
         self._session_start = datetime.now()
-        wb = _ensure_workbook()
-        self.player_id = _next_player_id(wb)
-        wb.save(LOG_PATH)
+        p1 = self._p(0)
+        p2 = self._p(1)
+        self.session_id = (
+            f"{self._session_start.strftime('%Y%m%dT%H%M%S')}"
+            f"_{p1.get('aruco_id', 'X')}_{p2.get('aruco_id', 'X')}"
+        )
+        print(f"  Session ID: {self.session_id}")
 
     def end(self, outcome: str):
         end_time = datetime.now()
-        start = self._session_start or end_time
+        start    = self._session_start or end_time
         duration = round((end_time - start).total_seconds(), 1)
+        p1, p2   = self._p(0), self._p(1)
 
         wb = _ensure_workbook()
+
         wb["Sessions"].append([
-            self.player_id,
-            self.player_name,
+            self.session_id,
+            p1.get("name", ""),  p1.get("aruco_id", ""), p1.get("age", ""), p1.get("plays", 0),
+            p2.get("name", ""),  p2.get("aruco_id", ""), p2.get("age", ""), p2.get("plays", 0),
             start.strftime("%Y-%m-%d"),
             self.map_name,
             start.strftime("%H:%M:%S"),
@@ -100,21 +105,18 @@ class GameLogger:
             outcome,
         ])
 
-        total = len(self._attempt_rows)
-        correct = sum(1 for a in self._attempt_rows if a["correct"])
+        total    = len(self._attempt_rows)
+        correct  = sum(1 for a in self._attempt_rows if a["correct"])
         accuracy = round(100 * correct / total, 1) if total else 0.0
 
         wb["PlayerSummary"].append([
-            self.player_id,
-            self.player_name,
+            self.session_id,
+            p1.get("name", ""), p1.get("aruco_id", ""),
+            p2.get("name", ""), p2.get("aruco_id", ""),
             start.strftime("%Y-%m-%d"),
             self.map_name,
             outcome,
-            total,
-            correct,
-            total - correct,
-            accuracy,
-            duration,
+            total, correct, total - correct, accuracy, duration,
         ])
 
         wb.save(LOG_PATH)
@@ -125,18 +127,19 @@ class GameLogger:
         self._checkpoint_start = datetime.now()
 
     def log_attempt(self, checkpoint_label: str, attempt_num: int,
-                     scanned: list[int], expected: list[int], result: str):
+                    scanned: list[int], expected: list[int], result: str):
         end_time = datetime.now()
-        start = self._checkpoint_start or end_time
+        start    = self._checkpoint_start or end_time
         duration = round((end_time - start).total_seconds(), 1)
-        correct = (result == "CORRECT")
+        correct  = (result == "CORRECT")
 
         self._attempt_rows.append({"correct": correct})
 
+        p1, p2 = self._p(0), self._p(1)
         wb = _ensure_workbook()
         wb["Attempts"].append([
-            self.player_id,
-            self.player_name,
+            self.session_id,
+            p1.get("name", ""), p2.get("name", ""),
             start.strftime("%Y-%m-%d"),
             self.map_name,
             checkpoint_label,

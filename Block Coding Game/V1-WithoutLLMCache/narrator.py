@@ -104,8 +104,8 @@ _HARDCODED = [
 _INTRO_FALLBACK = {
     "welcome":     "Hello friends! Welcome to the Misty Maze!",
     "how_to_play": (
-        "Card one means forward, card two means turn left, card three means turn right. "
-        "Place your cards in order and press the button to send me!"
+        "The Forward card moves me ahead, Turn Left turns me left, "
+        "Turn Right turns me right — place your cards and press the button!"
     ),
     "good_luck":   "Good luck — you have got this!",
 }
@@ -120,8 +120,8 @@ _cache_lock  = threading.Lock()
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _sequence_to_moves(sequence: list) -> str:
-    names = {1: "forward", 2: "left turn", 3: "right turn"}
-    return ", ".join(names.get(c, f"card {c}") for c in sequence)
+    names = {1: "Forward", 2: "Turn Left", 3: "Turn Right"}
+    return ", ".join(names.get(c, f"move {c}") for c in sequence)
 
 
 def _call_ollama(prompt: str, timeout: float) -> str | None:
