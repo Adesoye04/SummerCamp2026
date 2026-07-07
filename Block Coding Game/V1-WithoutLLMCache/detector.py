@@ -46,6 +46,7 @@ import rfid_reader
 CARD_MAP_PATH = Path(__file__).parent / "card_map.json"
 N_READERS     = 6          # poll all six readers every round
 POLL_INTERVAL = 0.05       # seconds between full scan cycles
+BUZZER_PIN    = 18         # BCM GPIO for piezo buzzer (active HIGH)
 
 
 # ── Module-level state (initialised lazily on first call) ─────────────────────
@@ -70,9 +71,20 @@ def _ensure_init():
         print("[RFID] Initialising six readers...")
         GPIO.setmode(GPIO.BCM)
         GPIO.setwarnings(False)
+        GPIO.setup(BUZZER_PIN, GPIO.OUT, initial=GPIO.LOW)
         _readers = rfid_reader.build_readers()
         print("[RFID] Readers ready.")
     _card_map = _load_card_map()
+
+
+def _buzz(duration: float = 0.1):
+    """Beep the physical buzzer for `duration` seconds."""
+    try:
+        GPIO.output(BUZZER_PIN, GPIO.HIGH)
+        time.sleep(duration)
+        GPIO.output(BUZZER_PIN, GPIO.LOW)
+    except Exception:
+        pass
 
 
 # ── Background first-tag watcher ──────────────────────────────────────────────
@@ -102,17 +114,10 @@ def _read_snapshot() -> list[str | None]:
 
 # ── Tag-removal gate ──────────────────────────────────────────────────────────
 
-def wait_for_tags_removed(timeout: float = 60.0, clear_seconds: float = 1.5):
-    """Block until all readers report empty for `clear_seconds` in a row.
-
-    Gives players time to physically remove all RFID cards before the next
-    round starts. Times out after `timeout` seconds regardless.
-    """
-    _ensure_init()
-    print("\n  [RFID] Waiting for all tags to be removed...")
+def _wait_clear(timeout: float, clear_seconds: float = 1.5) -> bool:
+    """Return True once all readers are empty for clear_seconds in a row."""
     deadline    = time.time() + timeout
     clear_since = None
-
     while time.time() < deadline:
         all_empty = all(
             rfid_reader.scan_once(name, reader) is None
@@ -123,19 +128,49 @@ def wait_for_tags_removed(timeout: float = 60.0, clear_seconds: float = 1.5):
                 clear_since = time.time()
             elif time.time() - clear_since >= clear_seconds:
                 print("  [RFID] All tags removed — continuing.")
-                return
+                return True
         else:
             clear_since = None
         time.sleep(POLL_INTERVAL)
+    return False
 
-    print("  [RFID] Timeout waiting for tag removal — continuing anyway.")
+
+def wait_for_tags_removed(speak_fn=None) -> str:
+    """Block until all RFID readers are empty, with escalating warnings.
+
+    Args:
+        speak_fn: optional callable(text) for audio output (e.g. misty.speak).
+
+    Returns:
+        'ok'        — all tags removed within the allowed window.
+        'powerdown' — tags remained after two warnings; caller should end session.
+    """
+    _ensure_init()
+
+    def _say(text: str):
+        print(f"  [RFID] {text}")
+        if speak_fn:
+            speak_fn(text)
+
+    _say("Please remove all the RFID cards from the readers.")
+    if _wait_clear(30.0):
+        return "ok"
+
+    _say("Cards still on the readers! Please take them all off now!")
+    if _wait_clear(60.0):
+        return "ok"
+
+    _say("Cards left on too long. Ending this game session.")
+    return "powerdown"
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
 def run_detector(n_slots: int = N_READERS,
                  first_tag_event: threading.Event | None = None,
-                 game_over_event: threading.Event | None = None) -> list[int] | None:
+                 game_over_event: threading.Event | None = None,
+                 inactivity_callback=None,
+                 inactivity_secs: float = 30.0) -> list[int] | None:
     """
     Wait for the player to tap RFID cards onto the readers, then submit with
     the physical button.
@@ -160,7 +195,7 @@ def run_detector(n_slots: int = N_READERS,
                          args=(done_event, first_tag_event),
                          daemon=True).start()
 
-    # Unblock submitted_event when Space is pressed
+    # Unblock submitted_event when Space is pressed; beep buzzer to confirm
     def _wait_for_space():
         import tty, termios
         fd = sys.stdin.fileno()
@@ -173,6 +208,7 @@ def run_detector(n_slots: int = N_READERS,
                     break
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        _buzz()
         submitted_event.set()
 
     threading.Thread(target=_wait_for_space, daemon=True).start()
@@ -184,6 +220,14 @@ def run_detector(n_slots: int = N_READERS,
             submitted_event.set()
 
     threading.Thread(target=_watch_game_over, daemon=True).start()
+
+    # After inactivity_secs with no submission, fire the reminder callback
+    if inactivity_callback is not None:
+        def _inactivity_timer():
+            if not submitted_event.wait(timeout=inactivity_secs):
+                if game_over_event is None or not game_over_event.is_set():
+                    inactivity_callback()
+        threading.Thread(target=_inactivity_timer, daemon=True).start()
 
     print()
     print("  Tap your RFID cards onto the readers (Reader 1 = step 1, etc.).")

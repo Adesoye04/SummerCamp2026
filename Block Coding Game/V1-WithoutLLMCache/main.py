@@ -5,7 +5,7 @@ import misty
 import narrator
 import id_scanner
 from recorder     import GameRecorder
-from maps         import MAPS
+from maps         import MAPS, select_checkpoints, Checkpoint
 from detector     import run_detector, wait_for_tags_removed
 from validator    import validate_and_message, ValidationResult
 from game_logger  import GameLogger
@@ -20,17 +20,34 @@ def select_map():
 
     print("\nAvailable maps:")
     for mid, m in available.items():
-        print(f"  [{mid}] {m.name}  ({len(m.checkpoints)} rounds)")
+        print(f"  [{mid}] {m.name}  ({len(m.checkpoints)} checkpoints)")
 
     while True:
         choice = input("\nSelect a map number: ").strip()
         if choice.isdigit() and int(choice) in available:
-            return available[int(choice)]
+            mid = int(choice)
+            return mid, available[mid]
         print(f"  Please enter one of: {list(available.keys())}")
 
 
-def run_game(active_map, players: list[dict]):
-    total = len(active_map.checkpoints)
+def _return_misty_home(cp: Checkpoint, map_id: int, drove_out: bool = False):
+    """Execute the path that returns Misty to Home(0,0) on Map 2.
+
+    drove_out: True when drive_map completed but return_map has not run yet.
+               In that case we execute return_map first (turn_180), then home.
+    """
+    if map_id != 2:
+        return
+    if drove_out and cp.return_map:
+        misty.execute_drive_map(cp.return_map)
+    if cp.return_home_map:
+        misty.speak("Time is up! I am heading back home now.")
+        misty.execute_drive_map(cp.return_home_map)
+
+
+def run_game(map_id: int, active_map, players: list[dict]):
+    checkpoints = select_checkpoints(active_map, n=3)
+    total = len(checkpoints)
     p1    = players[0]["name"]
     p2    = players[1]["name"]
 
@@ -44,6 +61,7 @@ def run_game(active_map, players: list[dict]):
     print(f"  Map     : {active_map.name}")
     print(f"  Players : {p1} & {p2}")
     print(f"  Rounds  : {total}")
+    print(f"  Order   : {[cp.location for cp in checkpoints]}")
     print(f"{'='*50}\n")
 
     misty.set_volume()
@@ -73,17 +91,33 @@ def run_game(active_map, players: list[dict]):
     misty.speak(intro["how_to_play"])
     misty.speak(intro["good_luck"])
 
-    cp0 = active_map.checkpoints[0]
-    narrator.prefetch(1, total, cp0.location, cp0.sequence)
+    narrator.prefetch(1, total, checkpoints[0].location, checkpoints[0].sequence)
 
     # ── Game loop ─────────────────────────────────────────────────────────────
-    for i, checkpoint in enumerate(active_map.checkpoints, 1):
+    last_completed_cp: Checkpoint | None = None  # Map 2: last fully executed cp
+    outcome = "Completed"
+
+    for i, checkpoint in enumerate(checkpoints, 1):
         is_last = (i == total)
 
         if game_over_event.is_set():
+            outcome = "TimeUp"
             break
 
-        print(f"\n── Phase {i} of {total} ──────────────────────────────")
+        # Map 2: silently drive to this checkpoint's starting position when
+        # intermediate checkpoints were skipped by the randomiser.
+        if checkpoint.auto_transit:
+            print(f"\n   [Auto-transit] Moving to starting position for {checkpoint.location}...")
+            misty.speak(f"I am on my way to the {checkpoint.location} area now!")
+            misty.execute_drive_map(checkpoint.auto_transit)
+            if game_over_event.is_set():
+                _return_misty_home(
+                    last_completed_cp or checkpoint, map_id, drove_out=False
+                )
+                outcome = "TimeUp"
+                break
+
+        print(f"\n── Round {i} of {total} ──────────────────────────────")
         print(f"   Location   : {checkpoint.location}")
         print(f"   Sequence   : {checkpoint.sequence}")
 
@@ -93,6 +127,7 @@ def run_game(active_map, players: list[dict]):
         attempts = 0
         while True:
             if game_over_event.is_set():
+                outcome = "TimeUp"
                 break
 
             print(f"\n   [Attempt {attempts + 1}] Waiting for cards — press SPACE to submit...")
@@ -101,9 +136,14 @@ def run_game(active_map, players: list[dict]):
             scanned = run_detector(
                 first_tag_event=first_tag_event,
                 game_over_event=game_over_event,
+                inactivity_callback=lambda: misty.speak(
+                    "Don't forget to place your cards on the readers!"
+                ),
+                inactivity_secs=30.0,
             )
 
             if game_over_event.is_set():
+                outcome = "TimeUp"
                 break
 
             if scanned is None:
@@ -134,28 +174,47 @@ def run_game(active_map, players: list[dict]):
                                           checkpoint.sequence, "success"))
 
                 if not is_last:
-                    next_cp = active_map.checkpoints[i]
+                    next_cp = checkpoints[i]
                     narrator.prefetch(i + 1, total, next_cp.location, next_cp.sequence)
 
                 print(f"\n   Driving out...")
                 misty.execute_drive_map(checkpoint.drive_map)
 
                 if game_over_event.is_set():
+                    _return_misty_home(checkpoint, map_id, drove_out=True)
+                    outcome = "TimeUp"
                     break
 
                 if checkpoint.return_map:
                     misty.speak(narrator.live(i, total, checkpoint.location,
                                               checkpoint.sequence, "returning"))
-                    print(f"   Returning home...")
+                    print(f"   Returning...")
                     misty.execute_drive_map(checkpoint.return_map)
-                    misty.speak("Remove all the RFID tags now", True)
-                    wait_for_tags_removed()
+
+                    if game_over_event.is_set():
+                        _return_misty_home(checkpoint, map_id, drove_out=False)
+                        outcome = "TimeUp"
+                        break
+
+                    removal = wait_for_tags_removed(speak_fn=misty.speak)
+                    if removal == "powerdown":
+                        print("\n  [RFID] Tags not removed — ending session.")
+                        misty.speak("Please remove all cards and come back for another game!")
+                        misty.led(0, 0, 0)
+                        misty.enable_hazards()
+                        logger.end(outcome="RFIDTimeout")
+                        recorder.stop()
+                        id_scanner.update_play_counts(players)
+                        return
+
+                last_completed_cp = checkpoint
 
                 if game_over_event.is_set():
+                    outcome = "TimeUp"
                     break
 
                 if is_last:
-                    print("\n   Final phase complete!")
+                    print("\n   Final round complete!")
                     misty.celebrate()
                 else:
                     misty.speak(f"Great work! On to Round {i + 1}.")
@@ -174,13 +233,17 @@ def run_game(active_map, players: list[dict]):
                 misty.led_ready()
 
         if game_over_event.is_set():
+            outcome = "TimeUp"
             break
 
     # ── End of game ───────────────────────────────────────────────────────────
-    if game_over_event.is_set():
+    if outcome == "TimeUp":
         print(f"\n{'='*50}")
         print("  TIME'S UP — GAME OVER")
         print(f"{'='*50}\n")
+        # Map 2: return Misty home from last completed checkpoint
+        if map_id == 2 and last_completed_cp is not None:
+            _return_misty_home(last_completed_cp, map_id, drove_out=False)
         misty.led_error()
         misty.speak(f"Time is up! Amazing effort {p1} and {p2}. Goodbye!")
         misty.led(0, 0, 0)
@@ -202,13 +265,13 @@ def run_forever():
     print("  MISTY MAZE — STARTING UP")
     print("="*50)
 
-    active_map = select_map()
+    map_id, active_map = select_map()
 
     while True:
         players = id_scanner.wait_for_players(n=2)
 
         try:
-            run_game(active_map, players)
+            run_game(map_id, active_map, players)
         except Exception as e:
             print(f"\n[ERROR] Game crashed: {e}")
             misty.led_error()
