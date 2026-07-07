@@ -1,15 +1,14 @@
 """
 narrator.py -- Narration for the Misty Maze game.
 
-INTRO  (pre-generated, from narration_cache.json):
+INTRO  (from narration_cache.json or hardcoded fallback):
     welcome, how_to_play, good_luck — spoken once at game start.
-    Generate with:  python3 generate_narration.py
 
-PER-CHECKPOINT  (generated live via Ollama qwen3:0.6b):
-    hint, success, wrong_order, wrong_ids, returning — generated on demand.
-    Prefetching runs in background while Misty is driving so the next
-    message is usually ready by the time it's needed.
-    Falls back to hardcoded strings if Ollama is unavailable or too slow.
+PER-CHECKPOINT (Ollama qwen3:0.6b, pre-generated at game start):
+    hint, success, wrong_order, wrong_ids, returning — all pre-generated
+    during intro speech via prefetch_all(), so narration is ready with no
+    delay during gameplay. Falls back to location-aware strings if Ollama
+    is unavailable or a message was already consumed.
 """
 
 import json
@@ -26,10 +25,11 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-CACHE_FILE   = os.path.join(os.path.dirname(os.path.abspath(__file__)), "narration_cache.json")
-OLLAMA_URL   = "http://localhost:11434/api/chat"
-LIVE_MODEL   = "qwen3:0.6b"
-LIVE_TIMEOUT = 6.0   # seconds to wait for Ollama before using fallback
+CACHE_FILE       = os.path.join(os.path.dirname(os.path.abspath(__file__)), "narration_cache.json")
+OLLAMA_URL       = "http://localhost:11434/api/chat"
+LIVE_MODEL       = "qwen3:0.6b"
+LIVE_TIMEOUT     = 6.0    # seconds for sync fallback generation
+PREFETCH_TIMEOUT = 12.0   # generous timeout for game-start pre-generation
 
 _SYSTEM = (
     "You are Misty, a small friendly robot talking to a child aged 6 to 12 "
@@ -61,59 +61,48 @@ _LIVE_PROMPTS = {
     ),
 }
 
-# ── Hardcoded fallbacks (used when Ollama is unavailable / too slow) ──────────
+# ── Fallbacks (location-aware, used when Ollama result unavailable) ───────────
 
-_HARDCODED = [
-    {
-        "hint":        "Alright, here we go! Place your cards to send me in the right direction!",
-        "success":     "Woohoo, you got it! Off I go!",
-        "wrong_order": "Right cards, wrong order — try swapping them around!",
-        "wrong_ids":   "Oops, those are not quite right — let's try different cards!",
-        "returning":   "That was fun! Heading back now!",
-    },
-    {
-        "hint":        "Time for leg two! Watch out for the turns on this one!",
-        "success":     "Yes! Nailed it! On my way to the supermarket!",
-        "wrong_order": "So close! Right cards, just mix up the order a little!",
-        "wrong_ids":   "Hmm, those cards will not get me there — try a different combo!",
-        "returning":   "Got what I need! Heading back home!",
-    },
-    {
-        "hint":        "Leg three — there is a left turn AND a right turn. You can do it!",
-        "success":     "Amazing! That was tricky and you crushed it!",
-        "wrong_order": "Right cards, wrong order! Think about which turn comes first!",
-        "wrong_ids":   "Those are not the right cards for this path — try some different ones!",
-        "returning":   "What an adventure! Zooming back now!",
-    },
-    {
-        "hint":        "Leg four — heading to school! Watch for the double forward in the middle!",
-        "success":     "Wooo, perfect! Off to school we go!",
-        "wrong_order": "Almost! The cards are right but the order is jumbled — rearrange and try again!",
-        "wrong_ids":   "Oops, wrong cards! Think about the path to school!",
-        "returning":   "School visit done! Racing back home!",
-    },
-    {
-        "hint":        "Last leg! Double forward then a right turn — you have got this!",
-        "success":     "You did it! Final stretch, here I come!",
-        "wrong_order": "So close to the finish! Right cards, wrong order — one more try!",
-        "wrong_ids":   "Not quite right for the final leg — try some different cards!",
-        "returning":   "We made it! Heading home one last time!",
-    },
-]
+def _fallback(key: str, phase: int, location: str, total: int = 3) -> str:
+    is_last = (phase == total)
+    return {
+        "hint": (
+            f"Place your cards in the right order to send me to the {location}!"
+        ),
+        "success": (
+            f"Amazing! I am heading to the {location} right now!"
+        ),
+        "wrong_order": (
+            "Those cards are right but in the wrong order — rearrange them and try again!"
+        ),
+        "wrong_ids": (
+            f"Those cards will not get me to the {location} — try a different set!"
+        ),
+        "returning": (
+            "We are home — well done, everyone!"
+            if is_last
+            else f"Great visit! Now heading back from the {location}!"
+        ),
+    }[key]
+
 
 _INTRO_FALLBACK = {
-    "welcome":     "Hello friends! Welcome to the Misty Maze!",
+    "welcome": "Hello friends! Welcome to the Misty Maze!",
     "how_to_play": (
-        "The Forward card moves me ahead, Turn Left turns me left, "
-        "Turn Right turns me right — place your cards and press the button!"
+        "You have six card slots in front of you. "
+        "The Forward card moves me ahead one step. "
+        "The Left card turns me to my left. "
+        "The Right card turns me to my right. "
+        "Place your cards in order from slot one to six to build a path, "
+        "then press the big button to send me on my way!"
     ),
-    "good_luck":   "Good luck — you have got this!",
+    "good_luck": "I am so excited — let's go and explore together!",
 }
 
 
 # ── Pre-fetch cache ───────────────────────────────────────────────────────────
 
-_cache: dict = {}          # (phase, key) -> str
+_cache: dict = {}
 _cache_lock  = threading.Lock()
 
 
@@ -148,24 +137,12 @@ def _call_ollama(prompt: str, timeout: float) -> str | None:
         return None
 
 
-def _fallback(key: str, phase: int, location: str) -> str:
-    idx = phase - 1
-    if 0 <= idx < len(_HARDCODED):
-        return _HARDCODED[idx].get(key, "")
-    return {
-        "hint":        f"Place your cards to navigate me to the {location}!",
-        "success":     f"Great job! Heading to the {location}!",
-        "wrong_order": "Right cards, wrong order — try rearranging!",
-        "wrong_ids":   "Those are not quite right — try different cards!",
-        "returning":   f"Trip to the {location} done — heading back!",
-    }[key]
-
-
-def _fetch_and_store(phase: int, total: int, location: str, moves: str, key: str):
+def _fetch_and_store(phase: int, total: int, location: str, moves: str,
+                     key: str, timeout: float = LIVE_TIMEOUT):
     prompt = _LIVE_PROMPTS[key].format(
         phase=phase, total=total, location=location, moves=moves
     )
-    text = _call_ollama(prompt, timeout=LIVE_TIMEOUT)
+    text = _call_ollama(prompt, timeout=timeout)
     if text:
         with _cache_lock:
             _cache[(phase, key)] = text
@@ -195,13 +172,33 @@ def load_intro() -> dict:
     except Exception as e:
         print(f"  [narrator] Cache load failed: {e} — using fallbacks.")
     print("  [narrator] No intro cache — using hardcoded fallbacks.")
-    print("     Run 'python3 generate_narration.py' to generate intro narration.")
     return dict(_INTRO_FALLBACK)
 
 
+def prefetch_all(checkpoints: list) -> None:
+    """Pre-generate narration for ALL checkpoints at game start.
+
+    Launches one background thread per (checkpoint × message_type) so that
+    by the time Round 1 begins — after intro speech — every message is cached.
+    Clears any stale cache from a previous game first.
+    """
+    with _cache_lock:
+        _cache.clear()
+    total = len(checkpoints)
+    print(f"  [narrator] Pre-generating narration for {total} checkpoints…")
+    for i, cp in enumerate(checkpoints, 1):
+        moves = _sequence_to_moves(cp.sequence)
+        for key in _LIVE_PROMPTS:
+            threading.Thread(
+                target=_fetch_and_store,
+                args=(i, total, cp.location, moves, key, PREFETCH_TIMEOUT),
+                daemon=True,
+            ).start()
+
+
 def prefetch(phase: int, total: int, location: str, sequence: list):
-    """Start background generation for all message types of an upcoming checkpoint.
-    Call this while Misty is driving so messages are ready when needed.
+    """Start background generation for one checkpoint (legacy single-round call).
+    Still useful as a top-up if a cached message was already consumed.
     """
     moves = _sequence_to_moves(sequence)
     for key in _LIVE_PROMPTS:
@@ -215,21 +212,20 @@ def prefetch(phase: int, total: int, location: str, sequence: list):
 def live(phase: int, total: int, location: str, sequence: list, key: str) -> str:
     """Return a narration string for the given key.
 
-    Checks prefetch cache first (waits up to 2s), then generates synchronously,
-    then falls back to a hardcoded string.
+    Checks prefetch cache first (waits up to 4s), then generates synchronously,
+    then falls back to a location-aware hardcoded string.
     """
-    # Wait briefly for a prefetched result
-    deadline = time.time() + 2.0
+    deadline = time.time() + 4.0
     while time.time() < deadline:
         with _cache_lock:
             if (phase, key) in _cache:
                 return _cache.pop((phase, key))
         time.sleep(0.1)
 
-    # Generate synchronously with a short timeout
+    # Cache miss — generate synchronously
     moves  = _sequence_to_moves(sequence)
     prompt = _LIVE_PROMPTS[key].format(
         phase=phase, total=total, location=location, moves=moves
     )
-    text = _call_ollama(prompt, timeout=3.0)
-    return text or _fallback(key, phase, location)
+    text = _call_ollama(prompt, timeout=LIVE_TIMEOUT)
+    return text or _fallback(key, phase, location, total)
