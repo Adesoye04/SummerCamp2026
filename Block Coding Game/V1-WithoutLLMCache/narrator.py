@@ -178,22 +178,30 @@ def load_intro() -> dict:
 def prefetch_all(checkpoints: list) -> None:
     """Pre-generate narration for ALL checkpoints at game start.
 
-    Launches one background thread per (checkpoint × message_type) so that
-    by the time Round 1 begins — after intro speech — every message is cached.
+    Runs a single background thread that generates messages one at a time so
+    Ollama is never flooded with concurrent requests. Priority order: hint
+    first for each round (needed before the player submits), then the rest.
     Clears any stale cache from a previous game first.
     """
     with _cache_lock:
         _cache.clear()
     total = len(checkpoints)
     print(f"  [narrator] Pre-generating narration for {total} checkpoints…")
-    for i, cp in enumerate(checkpoints, 1):
-        moves = _sequence_to_moves(cp.sequence)
-        for key in _LIVE_PROMPTS:
-            threading.Thread(
-                target=_fetch_and_store,
-                args=(i, total, cp.location, moves, key, PREFETCH_TIMEOUT),
-                daemon=True,
-            ).start()
+
+    # hint first for all rounds, then the rest — so Round 1 hint is ready soonest
+    priority_order = ["hint", "success", "wrong_order", "wrong_ids", "returning"]
+    work = [
+        (i, cp, key)
+        for key in priority_order
+        for i, cp in enumerate(checkpoints, 1)
+    ]
+
+    def _run_all():
+        for phase, cp, key in work:
+            moves = _sequence_to_moves(cp.sequence)
+            _fetch_and_store(phase, total, cp.location, moves, key, PREFETCH_TIMEOUT)
+
+    threading.Thread(target=_run_all, daemon=True).start()
 
 
 def prefetch(phase: int, total: int, location: str, sequence: list):
