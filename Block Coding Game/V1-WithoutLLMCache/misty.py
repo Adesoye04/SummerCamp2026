@@ -15,7 +15,7 @@ DEG_PER_SECOND = 15.17
 # ── ✏️  Voice / Audio ─────────────────────────────────────────────────────────
 VOICE        = "en-us-x-sfg-local"  # Android TTS voice installed on this robot
 PITCH        = 1.0                   # 1.0 = normal
-SPEECH_RATE  = 0.9                   # <1 = slower/clearer for kids
+SPEECH_RATE  = 0.75                  # <1 = slower/clearer for kids
 VOLUME       = 90                    # speaker volume 0-100 (set once at startup)
 
 # Reuse one TCP connection for every request instead of a new handshake per
@@ -111,7 +111,7 @@ def speak(text: str, wait: bool = True):
     })
     if wait:
         words = max(1, len(text.split()))
-        time.sleep(words / (2.6 * SPEECH_RATE) + 0.5)
+        time.sleep(words / (2.6 * SPEECH_RATE) + 0.8)
 
 
 # ── LED ───────────────────────────────────────────────────────────────────────

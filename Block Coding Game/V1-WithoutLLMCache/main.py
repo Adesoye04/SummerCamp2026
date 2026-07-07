@@ -83,13 +83,15 @@ def run_game(map_id: int, active_map, players: list[dict]):
     print("\nLoading intro narration...")
     intro = narrator.load_intro()
 
+    # Pre-generate ALL checkpoint narration in the background while Misty
+    # speaks the intro, so every message is cache-ready before Round 1.
+    narrator.prefetch_all(checkpoints)
+
     misty.led_ready()
     misty.speak(f"Welcome {p1} and {p2}! I am so excited to play with you today!")
     misty.speak(f"Today's map is {active_map.name} with {total} rounds.")
     misty.speak(intro["how_to_play"])
     misty.speak(intro["good_luck"])
-
-    narrator.prefetch(1, total, checkpoints[0].location, checkpoints[0].sequence)
 
     # ── Game loop ─────────────────────────────────────────────────────────────
     outcome              = "Completed"
@@ -158,10 +160,6 @@ def run_game(map_id: int, active_map, players: list[dict]):
                 misty.speak(narrator.live(i, total, checkpoint.location,
                                           checkpoint.sequence, "success"))
 
-                if not is_last:
-                    next_cp = checkpoints[i]
-                    narrator.prefetch(i + 1, total, next_cp.location, next_cp.sequence)
-
                 print(f"\n   Driving out...")
                 misty.execute_drive_map(checkpoint.drive_map)
 
@@ -199,6 +197,7 @@ def run_game(map_id: int, active_map, players: list[dict]):
 
                 if is_last:
                     print("\n   Final round complete!")
+                    game_over_event.set()   # stop the 8-min timer
                     misty.celebrate()
                 else:
                     misty.speak(f"Great work! On to Round {i + 1}.")

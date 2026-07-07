@@ -205,7 +205,6 @@ def run_detector(n_slots: int = N_READERS,
                     break
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
-        _buzz()
         submitted_event.set()
 
     threading.Thread(target=_wait_for_space, daemon=True).start()
