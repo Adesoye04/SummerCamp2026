@@ -95,7 +95,7 @@ def run_game(map_id: int, active_map, players: list[dict]):
     misty.head(pitch=-40)   # tilt up ~45° to make eye contact with kids
 
     misty.speak(
-        f"{p1} and {p2}, today we are going on five special missions to reach "
+        f"{p1} and {p2}, today we are going on {total} special missions to reach "
         "different destinations. I need your help to find the right path. "
         "Once each mission starts, use the cards to guide me step by step across the map. "
         "Let's work together, choose the best route, and help me reach each destination. "
@@ -152,13 +152,15 @@ def run_game(map_id: int, active_map, players: list[dict]):
             print(f"\n   [Attempt {attempts + 1}] Waiting for cards — press green button to submit...")
             logger.begin_checkpoint_attempt()
 
+            _location = checkpoint.location   # capture for lambda
             scanned = run_detector(
                 first_tag_event=first_tag_event,
                 game_over_event=game_over_event,
-                inactivity_callback=lambda: misty.speak(
-                    "Don't forget to place your cards in the slots and press the green button!"
+                inactivity_callback=lambda loc=_location: misty.speak(
+                    f"Remember, I need to reach the {loc}! "
+                    "Place your cards in the slots and press the green button!"
                 ),
-                inactivity_secs=30.0,
+                inactivity_secs=10.0,
                 card_placed_callback=_on_card_placed,
                 no_cards_callback=lambda: misty.speak(
                     "I don't see any cards! Place your cards in the slots and try again."
