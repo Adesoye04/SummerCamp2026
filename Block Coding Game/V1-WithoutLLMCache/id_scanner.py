@@ -5,6 +5,9 @@ Polls a local USB webcam until two different registered IDs have been
 detected with stable readings. Falls back to keyboard entry if no webcam
 is found. Looks each ID up in users.json.
 
+Face detection: watches for a face via Haar cascade and has Misty greet
+the child and ask them to show their ID before scanning begins.
+
 Usage:
     from id_scanner import wait_for_players
     players = wait_for_players()   # blocks until 2 IDs scanned
@@ -15,13 +18,16 @@ import time
 from pathlib import Path
 
 import cv2
+import misty
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-USERS_PATH     = Path(__file__).parent.parent.parent / "Documents" / "users.json"
-ARUCO_DICT     = cv2.aruco.DICT_6X6_1000   # covers IDs up to 999
-POLL_INTERVAL  = 0.05                       # seconds between frame reads
-STABLE_FRAMES  = 8                          # frames a marker must appear before accepting
+USERS_PATH          = Path(__file__).parent.parent.parent / "Documents" / "users.json"
+ARUCO_DICT          = cv2.aruco.DICT_6X6_1000   # covers IDs up to 999
+POLL_INTERVAL       = 0.05                       # seconds between frame reads
+STABLE_FRAMES       = 8                          # frames a marker must appear before accepting
+FACE_STABLE_FRAMES  = 5                          # face frames before Misty greets
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -68,8 +74,33 @@ def _keyboard_fallback(n: int, users: dict) -> list[dict]:
             continue
         ids_seen.add(aruco_id)
         players_found.append(player)
-        print(f"  ✓ Player {slot}: {player['name']} (ID {aruco_id})\n")
+        name = player["name"]
+        misty.speak(f"Welcome, {name}! I am so happy to have you on the mission team!")
+        print(f"  ✓ Player {slot}: {name} (ID {aruco_id})\n")
     return players_found
+
+
+def _wait_for_face(cap, face_cascade) -> bool:
+    """Block until a face is detected for FACE_STABLE_FRAMES consecutive frames.
+
+    Returns True when a face is confirmed, False if cap fails immediately.
+    """
+    face_count = 0
+    print("  Watching for a player...")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(POLL_INTERVAL)
+            continue
+        gray  = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+        faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=4)
+        if len(faces) > 0:
+            face_count += 1
+            if face_count >= FACE_STABLE_FRAMES:
+                return True
+        else:
+            face_count = 0
+        time.sleep(POLL_INTERVAL)
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -77,8 +108,10 @@ def _keyboard_fallback(n: int, users: dict) -> list[dict]:
 def wait_for_players(n: int = 2) -> list[dict]:
     """Scan ArUco ID cards via USB webcam until n valid players are detected.
 
-    Requires STABLE_FRAMES consecutive frames showing the same marker before
-    accepting it, to avoid false positives from a card briefly passing the camera.
+    Phase 1 — face detection: wait until a face appears, then Misty greets
+    the child and asks them to hold up their ID card.
+    Phase 2 — ArUco scan: require STABLE_FRAMES consecutive frames with the
+    same marker before accepting. Speak a welcome after each accepted card.
     Falls back to keyboard entry if no webcam is available.
     """
     users = _load_users()
@@ -92,6 +125,9 @@ def wait_for_players(n: int = 2) -> list[dict]:
         print("  [id_scanner] No webcam found — falling back to keyboard entry.")
         return _keyboard_fallback(n, users)
 
+    face_cascade = cv2.CascadeClassifier(
+        cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+    )
     dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
     detector   = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
 
@@ -100,10 +136,18 @@ def wait_for_players(n: int = 2) -> list[dict]:
 
     try:
         while len(players_found) < n:
-            slot         = len(players_found) + 1
+            slot = len(players_found) + 1
+
+            # ── Phase 1: wait for face ────────────────────────────────────────
+            _wait_for_face(cap, face_cascade)
+            misty.speak(
+                "Hello there! I can see you! "
+                "Please hold your ID card up to the camera so I know who you are!"
+            )
+
+            # ── Phase 2: scan ArUco ID ────────────────────────────────────────
             last_id      = None
             stable_count = 0
-
             print(f"  Hold Player {slot}'s ID card up to the webcam...")
 
             while True:
@@ -131,12 +175,21 @@ def wait_for_players(n: int = 2) -> list[dict]:
                             player = _player_from_id(aruco_id, users)
                             if player is None:
                                 print(f"  ID {aruco_id} not registered — try another card.")
+                                misty.speak(
+                                    "Hmm, I don't recognise that card. "
+                                    "Try a different ID card!"
+                                )
                                 last_id      = None
                                 stable_count = 0
                             else:
                                 ids_seen.add(aruco_id)
                                 players_found.append(player)
-                                print(f"  ✓ Player {slot}: {player['name']} (ID {aruco_id})\n")
+                                name = player["name"]
+                                print(f"  ✓ Player {slot}: {name} (ID {aruco_id})\n")
+                                misty.speak(
+                                    f"Welcome, {name}! "
+                                    "I am so happy to have you on the mission team!"
+                                )
                                 time.sleep(1.5)   # pause so card can be lowered before next scan
                             break
                     else:

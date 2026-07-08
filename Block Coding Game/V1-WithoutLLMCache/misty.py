@@ -1,5 +1,14 @@
+import json
 import time
+import threading
 import requests
+
+try:
+    import websocket as _websocket
+    _WS_AVAILABLE = True
+except ImportError:
+    _websocket = None
+    _WS_AVAILABLE = False
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -22,6 +31,82 @@ VOLUME       = 90                    # speaker volume 0-100 (set once at startup
 # command — on a flaky/congested hotspot link the handshake itself is a
 # common point of packet loss.
 _session = requests.Session()
+
+
+# ── WebSocket movement-completion tracking ────────────────────────────────────
+
+_ws_app      = None
+_ws_moving   = False
+_stopped_event = threading.Event()
+_stopped_event.set()   # start as "already stopped"
+
+WS_STOP_TIMEOUT = 5.0  # fallback seconds after commanded duration
+
+
+def _on_ws_message(ws, message):
+    global _ws_moving
+    try:
+        msg = json.loads(message).get("message", {})
+        lin = abs(float(msg.get("linearVelocity", 0)))
+        ang = abs(float(msg.get("angularVelocity", 0)))
+        if lin > 0.5 or ang > 0.5:
+            _ws_moving = True
+            _stopped_event.clear()
+        elif _ws_moving:
+            _ws_moving = False
+            _stopped_event.set()
+    except Exception:
+        pass
+
+
+def connect_ws():
+    """Open a persistent WebSocket to receive LocomotionCommand events.
+
+    Drive functions use this to know when Misty has actually stopped rather
+    than guessing with a fixed sleep — eliminates move truncation on slower
+    networks or when Misty decelerates longer than expected.
+    """
+    global _ws_app
+    if not _WS_AVAILABLE:
+        print("  [WS] websocket-client not installed — using sleep-based timing.")
+        print("       Install with:  pip install websocket-client")
+        return
+
+    url = f"ws://{MISTY_IP}/pubsub"
+
+    def _on_open(ws):
+        ws.send(json.dumps({
+            "Operation": "subscribe",
+            "Type":      "LocomotionCommand",
+            "DebounceMs": 0,
+            "EventName": "LocomotionCommand",
+            "Message":   "",
+        }))
+        print("  [WS] Subscribed to LocomotionCommand.")
+
+    _ws_app = _websocket.WebSocketApp(
+        url,
+        on_open    = _on_open,
+        on_message = _on_ws_message,
+        on_error   = lambda ws, e: print(f"  [WS] Error: {e}"),
+        on_close   = lambda ws, c, m: print("  [WS] Disconnected."),
+    )
+    threading.Thread(
+        target=lambda: _ws_app.run_forever(reconnect=5),
+        daemon=True,
+    ).start()
+    time.sleep(1.0)
+    print("  [WS] Connected to Misty.")
+
+
+def _wait_stopped(fallback_ms: int):
+    """Wait until Misty reports zero velocity, or fall back to sleep + buffer."""
+    if _WS_AVAILABLE and _ws_app is not None:
+        timeout = fallback_ms / 1000 + WS_STOP_TIMEOUT
+        if not _stopped_event.wait(timeout=timeout):
+            print(f"  [WS] Stop timeout after {timeout:.1f}s — continuing.")
+    else:
+        time.sleep(fallback_ms / 1000 + 0.5)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -61,36 +146,41 @@ def _deg_to_ms(degrees: float) -> int:
 def forward(cm: float):
     ms = _cm_to_ms(cm)
     print(f"    → forward {cm}cm ({ms}ms)")
+    _stopped_event.clear()
     _post("drive/time", {"LinearVelocity": DRIVE_SPEED, "AngularVelocity": 0, "TimeMs": ms})
-    time.sleep(ms / 1000 + 0.3)
+    _wait_stopped(ms)
 
 
 def back(cm: float):
     ms = _cm_to_ms(cm)
     print(f"    → back {cm}cm ({ms}ms)")
+    _stopped_event.clear()
     _post("drive/time", {"LinearVelocity": -DRIVE_SPEED, "AngularVelocity": 0, "TimeMs": ms})
-    time.sleep(ms / 1000 + 0.3)
+    _wait_stopped(ms)
 
 
 def turn_left(degrees: float):
     ms = _deg_to_ms(degrees)
     print(f"    → turn left {degrees}° ({ms}ms)")
+    _stopped_event.clear()
     _post("drive/time", {"LinearVelocity": 0, "AngularVelocity": TURN_SPEED, "TimeMs": ms})
-    time.sleep(ms / 1000 + 0.5)
+    _wait_stopped(ms)
 
 
 def turn_right(degrees: float):
     ms = _deg_to_ms(degrees)
     print(f"    → turn right {degrees}° ({ms}ms)")
+    _stopped_event.clear()
     _post("drive/time", {"LinearVelocity": 0, "AngularVelocity": -TURN_SPEED, "TimeMs": ms})
-    time.sleep(ms / 1000 + 0.5)
+    _wait_stopped(ms)
 
 
 def turn_180():
     ms = _deg_to_ms(180)
     print(f"    → turn 180° ({ms}ms)")
+    _stopped_event.clear()
     _post("drive/time", {"LinearVelocity": 0, "AngularVelocity": TURN_SPEED, "TimeMs": ms})
-    time.sleep(ms / 1000 + 0.5)
+    _wait_stopped(ms)
 
 
 def head(pitch: float = 0, roll: float = 0, yaw: float = 0, velocity: float = 60):
@@ -153,8 +243,12 @@ def enable_hazards():
 # ── Expressive ────────────────────────────────────────────────────────────────
 
 def celebrate():
+    """Turn to face kids, then celebrate with speech and a head nod."""
+    turn_180()
+    head(pitch=-40)
     led_win()
     speak("Congratulations, mission team! All missions complete — you are incredible!")
+    # Head nod
     _post("head", {"Pitch": -10, "Roll": 0, "Yaw": 0, "Velocity": 60})
     time.sleep(0.4)
     _post("head", {"Pitch": 10, "Roll": 0, "Yaw": 0, "Velocity": 60})
