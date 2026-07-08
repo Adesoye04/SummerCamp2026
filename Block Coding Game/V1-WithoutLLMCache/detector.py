@@ -52,6 +52,7 @@ BUZZER_PIN    = 18         # BCM GPIO for piezo buzzer (active HIGH)
 # ── Module-level state (initialised lazily on first call) ─────────────────────
 _readers: list | None = None   # list of (name, SoftCSReader)
 _card_map: dict[str, int] = {}
+_spi_lock = threading.Lock()   # prevents concurrent scan_once calls from multiple threads
 
 
 def _load_card_map() -> dict[str, int]:
@@ -91,10 +92,11 @@ def _first_tag_watcher(done_event: threading.Event,
     """Lightweight background thread — only watches for the very first card tap
     so the game timer can start. Stops as soon as first_tag_event is set."""
     while not done_event.is_set() and not first_tag_event.is_set():
-        for name, reader in _readers:
-            if rfid_reader.scan_once(name, reader):
-                first_tag_event.set()
-                return
+        with _spi_lock:
+            for name, reader in _readers:
+                if rfid_reader.scan_once(name, reader):
+                    first_tag_event.set()
+                    return
         time.sleep(POLL_INTERVAL)
 
 
@@ -102,10 +104,11 @@ def _first_tag_watcher(done_event: threading.Event,
 
 def _read_snapshot() -> list[str | None]:
     """Read all readers once and return their current UIDs (or None)."""
-    result = []
-    for name, reader in _readers:
-        uid = rfid_reader.scan_once(name, reader)
-        result.append(uid if uid else None)
+    with _spi_lock:
+        result = []
+        for name, reader in _readers:
+            uid = rfid_reader.scan_once(name, reader)
+            result.append(uid if uid else None)
     return result
 
 
@@ -116,10 +119,11 @@ def _wait_clear(timeout: float, clear_seconds: float = 1.5) -> bool:
     deadline    = time.time() + timeout
     clear_since = None
     while time.time() < deadline:
-        all_empty = all(
-            rfid_reader.scan_once(name, reader) is None
-            for name, reader in _readers
-        )
+        with _spi_lock:
+            all_empty = all(
+                rfid_reader.scan_once(name, reader) is None
+                for name, reader in _readers
+            )
         if all_empty:
             if clear_since is None:
                 clear_since = time.time()
