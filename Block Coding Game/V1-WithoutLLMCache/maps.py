@@ -26,12 +26,12 @@ class Map:
 
 # ── ✏️  EDIT HERE ─────────────────────────────────────────────────────────────
 
-DISTANCE = 30   # cm per forward step
+DISTANCE = 35   # cm per forward step
 TURN     = 90   # degrees per turn
 
-# ── Grid reference (1 unit = DISTANCE = 30 cm, Home = origin, North = up) ──
+# ── Grid reference (1 unit = DISTANCE = 35 cm, Home = origin, North = up) ──
 #
-#   Space Center(-2,2)  Ice-cream(-1,2)  School(0,2)
+#   Park(-2,2)  Ice-cream(-1,2)  School(0,2)
 #        J2(-2,1)   ──   J1(-1,1)   ──   J0(0,1)      ← junction row (horizontal highway)
 #   Restaurant(-2,0)  Supermarket(-1,0)  Home(0,0)
 #
@@ -134,11 +134,11 @@ MAPS: dict[int, Map] = {
                 ],
             ),
 
-            # Phase 5: Space Center  (-2,2)  sequence 6
+            # Phase 5: Park  (-2,2)  sequence 6
             Checkpoint(
                 sequence   = [1, 2, 1, 1, 3, 1],
-                hint       = "Six cards — double forward then a right turn to the Space Center!",
-                location   = "Space Center",
+                hint       = "Six cards — double forward then a right turn to the Park!",
+                location   = "Park",
                 drive_map  = [
                     ("forward",    DISTANCE),
                     ("turn_left",  TURN),
@@ -180,7 +180,7 @@ MAPS: dict[int, Map] = {
         #
         # Path 1:  Home → School → Supermarket → Ice-cream  → Home  (max 5 steps)
         # Path 2:  Home → School → Restaurant  → Ice-cream  → Home  (max 6 steps)
-        # Path 3:  Home → School → Restaurant  → Space Center → Home (max 6 steps)
+        # Path 3:  Home → School → Restaurant  → Park → Home (max 6 steps)
         # ───────────────────────────────────────────────────────────────────────
         paths = [
 
@@ -357,7 +357,7 @@ MAPS: dict[int, Map] = {
                 ),
             ],
 
-            # ── Path 3: School → Restaurant → Space Center → Home ─────────────
+            # ── Path 3: School → Restaurant → Park → Home ─────────────
             [
                 # Leg 1 — same as Path 1
                 Checkpoint(
@@ -401,12 +401,12 @@ MAPS: dict[int, Map] = {
                     ],
                 ),
 
-                # Leg 3 — Restaurant(-2,0)(N) → Space Center(-2,2)
-                # fwd→J2(N), fwd→Space Center  |  arrive facing N
+                # Leg 3 — Restaurant(-2,0)(N) → Park(-2,2)
+                # fwd→J2(N), fwd→Park  |  arrive facing N
                 Checkpoint(
                     sequence        = [1, 1],
-                    hint            = "Two Forwards straight up to the Space Center!",
-                    location        = "Space Center",
+                    hint            = "Two Forwards straight up to the Park!",
+                    location        = "Park",
                     drive_map       = [
                         ("forward", DISTANCE),
                         ("forward", DISTANCE),
@@ -423,7 +423,7 @@ MAPS: dict[int, Map] = {
                     ],
                 ),
 
-                # Leg 4 — Space Center(-2,2)(S) → Home  [final puzzle]
+                # Leg 4 — Park(-2,2)(S) → Home  [final puzzle]
                 # fwd→J2(S), left(S→E), fwd→J1(E), fwd→J0(E), right(E→S), fwd→Home
                 Checkpoint(
                     sequence        = [1, 2, 1, 1, 3, 1],

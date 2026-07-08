@@ -9,7 +9,7 @@ BASE_URL  = f"http://{MISTY_IP}/api"
 # ── ✏️  Calibration ────────────────────────────────────────────────────────────
 DRIVE_SPEED    = 35.0
 TURN_SPEED     = 20.0
-CM_PER_SECOND  = 20.0
+CM_PER_SECOND  = 23.3
 DEG_PER_SECOND = 15.17
 
 # ── ✏️  Voice / Audio ─────────────────────────────────────────────────────────
