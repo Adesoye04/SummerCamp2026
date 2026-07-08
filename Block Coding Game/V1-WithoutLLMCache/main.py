@@ -265,7 +265,11 @@ def run_game(map_id: int, active_map, players: list[dict]):
         if map_id == 2 and last_completed_cp is not None:
             _return_misty_home(last_completed_cp, map_id, drove_out=False)
         misty.led_error()
+        # Turn to face kids before speaking
+        misty.turn_180()
+        misty.head(pitch=-40)
         misty.speak(f"Time is up! You were an amazing mission team, {p1} and {p2}. See you next time!")
+        misty.head(pitch=0)
         misty.led(0, 0, 0)
         logger.end(outcome="TimeUp")
     else:
@@ -285,7 +289,16 @@ def run_forever():
     print("  MISTY MAZE — STARTING UP")
     print("="*50)
 
+    # Connect WebSocket for movement-completion events
+    misty.connect_ws()
+
     map_id, active_map = select_map()
+
+    # Startup: turn to face children and tilt head up before check-in
+    misty.turn_180()
+    misty.head(pitch=-40)
+    misty.speak("Hello! I am Misty and I am so excited for today's missions!")
+    misty.speak("Step up and show me your ID card so I know who I am playing with!")
 
     while True:
         players = id_scanner.wait_for_players(n=2)
@@ -299,6 +312,11 @@ def run_forever():
 
         print("\n  Game over. Ready for the next players!")
         misty.led_ready()
+        # Face kids for the next round of check-in
+        misty.turn_180()
+        misty.head(pitch=-40)
+        misty.speak("That was amazing! Who is ready to play next?")
+        misty.speak("Step up and show me your ID card!")
         time.sleep(3)
 
 

@@ -58,8 +58,9 @@ _LIVE_PROMPTS = {
         "Mention '{location}' and hint which card types are needed — under 12 words."
     ),
     "returning": (
-        "Just arrived at {location}, mission {phase}. Thank the children and say '{location}'. "
-        "One excited sentence under 10 words."
+        "Just arrived at {location}, mission {phase}! Be VERY excited. "
+        "Say '{location}' loudly — one thrilled sentence under 10 words, "
+        "like 'Yesssss! I am at the {location}! We completed the mission!'"
     ),
 }
 
@@ -86,9 +87,9 @@ def _fallback(key: str, phase: int, location: str, total: int = 3,
             f"Think about how many Forwards and turns you need!"
         ),
         "returning": (
-            "Thank you for helping! Mission complete — I made it home!"
+            "Yesssss! I am back home! We completed the mission, team!"
             if is_last
-            else f"Thank you for helping! I arrived at the {location}!"
+            else f"Yesssss! I am at the {location}! We completed the mission!"
         ),
     }[key]
 
