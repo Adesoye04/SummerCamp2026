@@ -149,11 +149,11 @@ def wait_for_tags_removed(speak_fn=None) -> str:
         if speak_fn:
             speak_fn(text)
 
-    _say("Please remove all the RFID cards from the readers.")
+    _say("Please remove all your cards from the slots.")
     if _wait_clear(30.0):
         return "ok"
 
-    _say("Cards still on the readers! Please take them all off now!")
+    _say("Cards still in the slots! Please take them all off now!")
     if _wait_clear(60.0):
         return "ok"
 
@@ -226,8 +226,8 @@ def run_detector(n_slots: int = N_READERS,
         threading.Thread(target=_inactivity_timer, daemon=True).start()
 
     print()
-    print("  Tap your RFID cards onto the readers (Reader 1 = step 1, etc.).")
-    print("  Press SPACE to submit.")
+    print("  Place your cards in the slots — slot 1 is step 1.")
+    print("  Press the buzzer when ready.")
     print()
 
     submitted_event.wait()
@@ -250,7 +250,7 @@ def run_detector(n_slots: int = N_READERS,
         else:
             game_id = _card_map.get(uid, 0)
             if game_id == 0:
-                print(f"  ⚠  Reader {idx+1}: UID {uid} not in card map — treating as 0.")
+                print(f"  ⚠  Slot {idx+1}: UID {uid} not in card map — treating as 0.")
         result.append(game_id)
 
     # Trim trailing zeros

@@ -122,6 +122,7 @@ def run_game(map_id: int, active_map, players: list[dict]):
 
         misty.led_ready()
         misty.speak(narrator.live(i, total, checkpoint.location, checkpoint.sequence, "hint"))
+        misty.speak("Place your cards in the slots and press the buzzer when you are ready!")
 
         attempts = 0
         while True:
@@ -136,7 +137,7 @@ def run_game(map_id: int, active_map, players: list[dict]):
                 first_tag_event=first_tag_event,
                 game_over_event=game_over_event,
                 inactivity_callback=lambda: misty.speak(
-                    "Don't forget to place your cards on the readers!"
+                    "Don't forget to place your cards in the slots and press the buzzer!"
                 ),
                 inactivity_secs=30.0,
             )

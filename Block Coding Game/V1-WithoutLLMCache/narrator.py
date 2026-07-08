@@ -56,8 +56,8 @@ _LIVE_PROMPTS = {
         "One warm encourage under 10 words."
     ),
     "returning": (
-        "Visited {location}, round {phase}, now heading back. "
-        "One happy sentence under 8 words."
+        "Just arrived at {location}, round {phase}. Say thanks to the children for helping. "
+        "One excited sentence under 10 words."
     ),
 }
 
@@ -79,9 +79,9 @@ def _fallback(key: str, phase: int, location: str, total: int = 3) -> str:
             f"Those cards will not get me to the {location} — try a different set!"
         ),
         "returning": (
-            "We are home — well done, everyone!"
+            f"Thank you for helping! I made it home — well done, everyone!"
             if is_last
-            else f"Great visit! Now heading back from the {location}!"
+            else f"Thank you for helping! I arrived at the {location}!"
         ),
     }[key]
 
