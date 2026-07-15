@@ -23,10 +23,12 @@ import misty
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-USERS_PATH    = Path(__file__).parent.parent.parent / "Documents" / "users.json"
-ARUCO_DICT    = cv2.aruco.DICT_6X6_1000   # covers IDs up to 999
-POLL_INTERVAL = 0.05                       # seconds between frame reads
-STABLE_FRAMES = 8                          # frames a marker must appear before accepting
+USERS_PATH      = Path(__file__).parent.parent.parent / "Documents" / "users.json"
+ARUCO_DICT      = cv2.aruco.DICT_6X6_1000   # covers IDs up to 999
+POLL_INTERVAL   = 0.05                       # seconds between frame reads
+STABLE_FRAMES   = 8                          # frames a marker must appear before accepting
+MOTION_PIXELS   = 2000                       # foreground pixels to count as "someone arrived"
+MOTION_STABLE   = 4                          # consecutive motion frames before prompting
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -51,6 +53,29 @@ def _player_from_id(aruco_id: int, users: dict) -> dict | None:
         "plays":    data.get("plays", 0),
         "no_video": not data.get("consent", False),
     }
+
+
+def _wait_for_presence(cap) -> None:
+    """Block until motion is detected — someone walked up to the camera."""
+    subtractor = cv2.createBackgroundSubtractorMOG2(history=60, varThreshold=40,
+                                                     detectShadows=False)
+    stable = 0
+    print("  Watching for players to approach...")
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            time.sleep(POLL_INTERVAL)
+            continue
+        small  = cv2.resize(frame, (320, 240))
+        mask   = subtractor.apply(small)
+        motion = cv2.countNonZero(mask)
+        if motion > MOTION_PIXELS:
+            stable += 1
+            if stable >= MOTION_STABLE:
+                return
+        else:
+            stable = 0
+        time.sleep(POLL_INTERVAL)
 
 
 def _wait_for_button():
@@ -137,17 +162,23 @@ def wait_for_players(n: int = 2) -> list[dict]:
     print(f"  PLAYER CHECK-IN  ({n} players)")
     print(f"{'='*50}\n")
 
-    # ── Wait for green button press to start ──────────────────────────────────
-    print("  Waiting for green button press to start check-in...")
-    misty.speak("Press the green button when you are ready to play!")
-    _wait_for_button()
-    print("  Button pressed — starting check-in.")
-    misty.speak("Great! Both players, please show me your ID cards!")
-
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
         print("  [id_scanner] No webcam found — falling back to keyboard entry.")
+        # No webcam: skip presence detection, go straight to button + keyboard
+        misty.speak("Press the green button when you are ready to play!")
+        _wait_for_button()
         return _keyboard_fallback(n, users)
+
+    # ── Phase 1: motion detection — wait until someone approaches ────────────
+    _wait_for_presence(cap)
+    print("  Someone detected — prompting for button press.")
+    misty.speak("Hello there! Press the green button when you are ready to play!")
+
+    # ── Phase 2: wait for green button press ──────────────────────────────────
+    _wait_for_button()
+    print("  Button pressed — starting ID scan.")
+    misty.speak("Great! Both players, please show me your ID cards!")
 
     dictionary = cv2.aruco.getPredefinedDictionary(ARUCO_DICT)
     detector   = cv2.aruco.ArucoDetector(dictionary, cv2.aruco.DetectorParameters())
