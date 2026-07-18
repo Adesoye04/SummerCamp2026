@@ -32,7 +32,7 @@ def _drive(drive_map: list):
 # when to cut segments. Find the PC's IP with `ipconfig` while it is
 # connected to the Pi's hotspot, and set it here.
 
-PC_RECORDER_URL = "http://10.42.0.43:8765"   # ← PC's hotspot IP (ipconfig on the PC)
+PC_RECORDER_URL = "http://10.42.0.16:8765"   # ← Linux PC on the Pi's hotspot (hostname -I to confirm)
 
 
 def _recorder_cmd(path: str):
