@@ -1,23 +1,23 @@
 """
-pc_recorder.py — Webcam recorder server. RUNS ON THE PC, not the Pi.
+pc_recorder.py — Webcam+mic recorder server. RUNS ON THE LINUX PC, not the Pi.
 
-The webcam is plugged into the PC; the game runs on the Pi. The Pi sends
-segment commands over the hotspot network and this server records
-continuously, switching output files with no gap between segments.
+Records with ffmpeg (video + audio) instead of OpenCV (video only).
+The Pi sends segment commands over the hotspot network; each segment is
+one .mp4 file with sound.
 
 Endpoints (plain GET):
     /start?session_id=<id>  — close current segment, start a new file
     /stop                   — close current segment (recording pauses)
     /status                 — current segment name or "idle"
 
-Run on the PC (needs: pip install opencv-python):
-    python pc_recorder.py
+Run on the Linux PC (needs: sudo apt install ffmpeg):
+    python3 pc_recorder.py
 
 Recordings are saved to a `recordings/` folder next to this file.
-Windows Firewall will ask to allow Python on first run — allow it,
-otherwise the Pi cannot reach this server.
 """
 
+import signal
+import subprocess
 import threading
 import time
 from datetime import datetime
@@ -25,86 +25,91 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-import cv2
-
 # ── Config ────────────────────────────────────────────────────────────────────
 
 RECORDINGS_DIR = Path(__file__).parent / "recordings"
-WEBCAM_INDEX   = 0
-FPS            = 20.0
-RESOLUTION     = (1280, 720)
+VIDEO_DEVICE   = "/dev/video0"
+FPS            = 20
+RESOLUTION     = "1280x720"
 PORT           = 8765
 
+# Microphone input. "pulse"+"default" works on PulseAudio/PipeWire desktops.
+# If audio fails, the recorder automatically falls back to video-only.
+AUDIO_ARGS = ["-f", "pulse", "-i", "default"]
 
-# ── Continuous capture with swappable writers ────────────────────────────────
 
-class SegmentedRecorder:
-    """Holds the webcam open permanently; segments switch by swapping the
-    VideoWriter, so there is never a gap or a camera re-open delay."""
+# ── ffmpeg segment management ─────────────────────────────────────────────────
 
+class FfmpegRecorder:
     def __init__(self):
         RECORDINGS_DIR.mkdir(exist_ok=True)
-        self._writer: cv2.VideoWriter | None = None
+        self._proc: subprocess.Popen | None = None
         self._segment_name = "idle"
         self._lock = threading.Lock()
-        self._running = True
-        self._thread = threading.Thread(target=self._loop, daemon=True)
-        self._thread.start()
+
+    def _build_cmd(self, path: Path, with_audio: bool) -> list[str]:
+        cmd = ["ffmpeg", "-y",
+               "-f", "v4l2", "-framerate", str(FPS),
+               "-video_size", RESOLUTION, "-i", VIDEO_DEVICE]
+        if with_audio:
+            cmd += AUDIO_ARGS
+        cmd += ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "23"]
+        if with_audio:
+            cmd += ["-c:a", "aac"]
+        cmd += [str(path)]
+        return cmd
+
+    def _spawn(self, path: Path) -> subprocess.Popen | None:
+        """Start ffmpeg with audio; fall back to video-only if it dies fast."""
+        for with_audio in (True, False):
+            proc = subprocess.Popen(
+                self._build_cmd(path, with_audio),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            time.sleep(1.5)
+            if proc.poll() is None:
+                if not with_audio:
+                    print("[recorder] WARNING: mic capture failed — video only.")
+                return proc
+        print("[recorder] ERROR: ffmpeg could not start. Is the webcam free?")
+        return None
+
+    def _kill_current(self):
+        if self._proc and self._proc.poll() is None:
+            # SIGINT lets ffmpeg finalize the file cleanly
+            self._proc.send_signal(signal.SIGINT)
+            try:
+                self._proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._proc.kill()
+        self._proc = None
 
     def start_segment(self, session_id: str):
         safe_id = session_id.replace(":", "-").replace("/", "-")
-        path = RECORDINGS_DIR / f"{safe_id}.avi"
-        fourcc = cv2.VideoWriter_fourcc(*"XVID")
-        new_writer = cv2.VideoWriter(str(path), fourcc, FPS, RESOLUTION)
+        path = RECORDINGS_DIR / f"{safe_id}.mp4"
         with self._lock:
-            if self._writer:
-                self._writer.release()
-            self._writer = new_writer
-            self._segment_name = safe_id
-        print(f"[recorder] ▶ segment started: {path.name}")
+            self._kill_current()
+            self._proc = self._spawn(path)
+            self._segment_name = safe_id if self._proc else "idle"
+        if self._proc:
+            print(f"[recorder] ▶ segment started: {path.name}")
 
     def stop_segment(self):
         with self._lock:
-            if self._writer:
-                self._writer.release()
-                self._writer = None
+            self._kill_current()
             self._segment_name = "idle"
         print("[recorder] ■ segment stopped (not recording)")
 
     def status(self) -> str:
         with self._lock:
-            return self._segment_name if self._writer else "idle"
-
-    def _loop(self):
-        cap = cv2.VideoCapture(WEBCAM_INDEX)
-        if not cap.isOpened():
-            print(f"[recorder] ERROR: webcam {WEBCAM_INDEX} not found.")
-            return
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH,  RESOLUTION[0])
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, RESOLUTION[1])
-        print(f"[recorder] Webcam {WEBCAM_INDEX} open at {RESOLUTION[0]}x{RESOLUTION[1]}.")
-
-        frame_time = 1.0 / FPS
-        while self._running:
-            t0 = time.time()
-            ret, frame = cap.read()
-            if ret:
-                if frame.shape[1] != RESOLUTION[0] or frame.shape[0] != RESOLUTION[1]:
-                    frame = cv2.resize(frame, RESOLUTION)
-                with self._lock:
-                    if self._writer:
-                        self._writer.write(frame)
-            sleep = frame_time - (time.time() - t0)
-            if sleep > 0:
-                time.sleep(sleep)
-
-        with self._lock:
-            if self._writer:
-                self._writer.release()
-        cap.release()
+            if self._proc and self._proc.poll() is None:
+                return self._segment_name
+            return "idle"
 
 
-_recorder = SegmentedRecorder()
+_recorder = FfmpegRecorder()
 
 
 # ── HTTP interface ────────────────────────────────────────────────────────────
@@ -140,4 +145,8 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     print(f"[recorder] Listening on port {PORT}. Waiting for commands from the Pi...")
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    try:
+        ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    except KeyboardInterrupt:
+        _recorder.stop_segment()
+        print("\n[recorder] Stopped.")
