@@ -350,6 +350,11 @@ def run_game(map_id: int, active_map, players: list[dict]):
     misty.enable_hazards()
     id_scanner.update_play_counts(players)
 
+    # Third end-of-game turn: celebrate()/TimeUp turned her to the kids,
+    # run_forever() turns once more — this one keeps the total odd so she
+    # ends up facing the kids for the next check-in.
+    misty.turn_180()
+
 
 def run_forever():
     """Main loop: scan IDs → play game → repeat."""
